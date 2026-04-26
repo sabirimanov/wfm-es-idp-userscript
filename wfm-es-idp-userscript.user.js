@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         WFM ES IDP helpers
 // @namespace    https://github.com/sabirimanov/wfm-es-idp-userscript
-// @version      0.5.2
+// @version      0.5.3
 // @description  Automate pre-install modal serial capture, checklist steps 0–6 and 8, HES polling
 // @author       you
 // @homepageURL  https://github.com/sabirimanov/wfm-es-idp-userscript
@@ -17,6 +17,8 @@
 
   /** Set true to log every scripted action with a global order number in the console */
   const DEBUG_SCRIPT_ACTIONS = true;
+  /** Log every #nextStepBtn click (capture phase): user vs userscript vs other synthetic */
+  const LOG_NEXT_STEP_BTN_CLICKS = true;
 
   const LS_VALVE_PREFIX = "wfm_es_idp:valve_status:";
   const SERIAL_MAX_LEN = 16;
@@ -45,6 +47,10 @@
   const CHECKLIST_SAVED_RELOAD_MS = 1000;
 
   let wfmActionSeq = 0;
+  /** True while `wfmClick` is driving a programmatic `#nextStepBtn` press (for click logger). */
+  let wfmNextStepClickFromScript = false;
+  let wfmLastNextStepClickReason = "";
+  let nextStepBtnLoggerInstalled = false;
 
   /** @param {string} message */
   function wfmLog(message) {
@@ -70,14 +76,42 @@
     wfmLog(`set radio "${name}" → ${value}`);
   }
 
+  /**
+   * Set HTMLSelectElement value so React/framework state matches the DOM (native value setter + option.selected).
+   * @param {HTMLSelectElement} el
+   * @param {string} value `option.value` to select
+   */
+  function setSelectValueAndNotify(el, value) {
+    const desc = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value");
+    if (desc && desc.set) {
+      desc.set.call(el, value);
+    } else {
+      el.value = value;
+    }
+    const opts = el.options;
+    for (let i = 0; i < opts.length; i++) {
+      const o = opts[i];
+      o.selected = o.value === value;
+    }
+    const evInit = { bubbles: true, cancelable: true, composed: true };
+    el.dispatchEvent(new Event("input", evInit));
+    el.dispatchEvent(new Event("change", evInit));
+  }
+
   /** @param {string} name @param {string} value */
   function setSelect(name, value) {
     const el = document.querySelector(`select[name="${cssAttr(name)}"]`);
     if (!(el instanceof HTMLSelectElement)) return;
-    if (el.value === value) return;
-    el.value = value;
-    el.dispatchEvent(new Event("input", { bubbles: true }));
-    el.dispatchEvent(new Event("change", { bubbles: true }));
+    const targetOpt = Array.from(el.options).find((o) => o.value === value);
+    if (!targetOpt) return;
+    const committed = el.value === value && targetOpt.selected;
+    if (committed) return;
+    try {
+      el.focus();
+    } catch (_) {
+      /* ignore */
+    }
+    setSelectValueAndNotify(el, value);
     wfmLog(`set select "${name}" → ${value}`);
   }
 
@@ -209,7 +243,43 @@
    */
   function wfmClick(el, label) {
     if (label) wfmLog(label);
-    clickEl(el);
+    const isNext = el instanceof HTMLElement && el.id === "nextStepBtn";
+    if (isNext) {
+      wfmNextStepClickFromScript = true;
+      wfmLastNextStepClickReason = label || "wfmClick(#nextStepBtn)";
+    }
+    try {
+      clickEl(el);
+    } finally {
+      if (isNext) {
+        queueMicrotask(() => {
+          wfmNextStepClickFromScript = false;
+        });
+      }
+    }
+  }
+
+  function installNextStepBtnClickLogger() {
+    if (nextStepBtnLoggerInstalled || !LOG_NEXT_STEP_BTN_CLICKS) return;
+    nextStepBtnLoggerInstalled = true;
+    document.addEventListener(
+      "click",
+      (ev) => {
+        const t = ev.target;
+        if (!(t instanceof Element)) return;
+        const btn = t.id === "nextStepBtn" ? t : t.closest("#nextStepBtn");
+        if (!(btn instanceof HTMLElement) || btn.id !== "nextStepBtn") return;
+        const fromUserscript = wfmNextStepClickFromScript;
+        const source = ev.isTrusted ? "user" : fromUserscript ? "userscript" : "synthetic_or_other";
+        console.log("[WFM ES IDP] nextStepBtn click", {
+          source,
+          isTrusted: ev.isTrusted,
+          wfmUserscriptClick: fromUserscript,
+          wfmReason: fromUserscript ? wfmLastNextStepClickReason : undefined,
+        });
+      },
+      true
+    );
   }
 
   /** @param {string} stepId */
@@ -1167,6 +1237,7 @@
 
   installDeviceIdListeners();
   installMappingInputListeners();
+  installNextStepBtnClickLogger();
   attachChecklistSavedObserver();
   tick();
   const obs = new MutationObserver(() => scheduleTick());
