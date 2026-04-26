@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         WFM ES IDP helpers
 // @namespace    https://github.com/sabirimanov/wfm-es-idp-userscript
-// @version      0.2.7
+// @version      0.2.8
 // @description  Automate pre-install modal serial capture, checklist steps 0–6 and 8, HES polling
 // @author       you
 // @homepageURL  https://github.com/sabirimanov/wfm-es-idp-userscript
@@ -56,9 +56,120 @@
     return s.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
   }
 
-  /** @param {HTMLElement | null} btn */
-  function clickEl(btn) {
-    if (btn && !btn.disabled) btn.click();
+  /** @param {HTMLElement | null | undefined} el */
+  function isClickableDisabled(el) {
+    if (!(el instanceof HTMLElement)) return true;
+    if (el instanceof HTMLButtonElement || el instanceof HTMLInputElement || el instanceof HTMLSelectElement) {
+      return !!el.disabled;
+    }
+    if (el.getAttribute("aria-disabled") === "true") return true;
+    return false;
+  }
+
+  /**
+   * Clicks like a real pointer (many SPAs ignore bare HTMLElement.click()).
+   * @param {HTMLElement | null | undefined} el
+   */
+  function clickEl(el) {
+    if (!(el instanceof HTMLElement) || isClickableDisabled(el)) return;
+    try {
+      el.scrollIntoView({ block: "center", inline: "nearest" });
+    } catch (_) {
+      try {
+        el.scrollIntoView();
+      } catch (_) {
+        /* ignore */
+      }
+    }
+    try {
+      el.focus({ preventScroll: true });
+    } catch (_) {
+      try {
+        el.focus();
+      } catch (_) {
+        /* ignore */
+      }
+    }
+    const r = el.getBoundingClientRect();
+    const cx = Math.max(0, Math.floor(r.left + Math.min(r.width / 2, 80)));
+    const cy = Math.max(0, Math.floor(r.top + Math.min(r.height / 2, 40)));
+
+    const mouseInit = {
+      bubbles: true,
+      cancelable: true,
+      composed: true,
+      view: window,
+      clientX: cx,
+      clientY: cy,
+      screenX: cx + window.screenX,
+      screenY: cy + window.screenY,
+      button: 0,
+      buttons: 1,
+    };
+
+    const tryPointer = typeof PointerEvent !== "undefined";
+    if (tryPointer) {
+      try {
+        el.dispatchEvent(
+          new PointerEvent("pointerdown", {
+            ...mouseInit,
+            pointerId: 1,
+            pointerType: "mouse",
+            isPrimary: true,
+          })
+        );
+      } catch (_) {
+        /* ignore */
+      }
+    }
+    try {
+      el.dispatchEvent(new MouseEvent("mousedown", mouseInit));
+    } catch (_) {
+      /* ignore */
+    }
+    if (tryPointer) {
+      try {
+        el.dispatchEvent(
+          new PointerEvent("pointerup", {
+            ...mouseInit,
+            pointerId: 1,
+            pointerType: "mouse",
+            isPrimary: true,
+            buttons: 0,
+          })
+        );
+      } catch (_) {
+        /* ignore */
+      }
+    }
+    try {
+      el.dispatchEvent(
+        new MouseEvent("mouseup", {
+          ...mouseInit,
+          buttons: 0,
+        })
+      );
+    } catch (_) {
+      /* ignore */
+    }
+    try {
+      el.dispatchEvent(
+        new MouseEvent("click", {
+          ...mouseInit,
+          buttons: 0,
+          detail: 1,
+        })
+      );
+    } catch (_) {
+      /* ignore */
+    }
+    if (typeof el.click === "function") {
+      try {
+        el.click();
+      } catch (_) {
+        /* ignore */
+      }
+    }
   }
 
   /** @param {string} stepId */
