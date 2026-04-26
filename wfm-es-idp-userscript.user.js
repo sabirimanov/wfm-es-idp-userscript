@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         WFM ES IDP helpers
 // @namespace    https://github.com/sabirimanov/wfm-es-idp-userscript
-// @version      0.5.3
+// @version      0.5.4
 // @description  Automate pre-install modal serial capture, checklist steps 0–6 and 8, HES polling
 // @author       you
 // @homepageURL  https://github.com/sabirimanov/wfm-es-idp-userscript
@@ -216,17 +216,11 @@
     } catch (_) {
       /* ignore */
     }
-    try {
-      el.dispatchEvent(
-        new MouseEvent("click", {
-          ...mouseInit,
-          buttons: 0,
-          detail: 1,
-        })
-      );
-    } catch (_) {
-      /* ignore */
-    }
+    /*
+     * Do not dispatch a synthetic MouseEvent("click") here: HTMLElement.click() already
+     * fires one "click" in the DOM. Doing both double-invokes listeners (e.g. #nextStepBtn
+     * and Edit/Validate toggle on the same button → empty validate / double step advance).
+     */
     if (typeof el.click === "function") {
       try {
         el.click();
@@ -427,6 +421,14 @@
       if (!n) return;
       if (doneAttr && (/** @type {Record<string, string>} */ (n.dataset))[doneAttr]) return;
       if (doneAttr) (/** @type {Record<string, string>} */ (n.dataset))[doneAttr] = "1";
+      const ae = document.activeElement;
+      if (ae instanceof HTMLElement && ae !== n) {
+        try {
+          ae.blur();
+        } catch (_) {
+          /* ignore */
+        }
+      }
       wfmClick(n, `step ${stepId}: click #nextStepBtn`);
       if (typeof onAfterClick === "function") onAfterClick();
     }, wait);
@@ -502,7 +504,7 @@
     preModalWasHidden: true,
     deviceIdListenersInstalled: false,
     mappingInputListenersInstalled: false,
-    s2: /** @type {{ phase: string; editClicked: boolean; editClickScheduled: boolean; mappingCleared: boolean; mappingClearedAt: number; editClickedAt: number; keystrokesAfterClear: number; mappingUserInteractedTrusted: boolean; validateClicked: boolean; validateScheduled: boolean; radiosApplied: boolean; sawSimActiveSwal: boolean }} */ ({
+    s2: /** @type {{ phase: string; editClicked: boolean; editClickScheduled: boolean; mappingCleared: boolean; mappingClearedAt: number; editClickedAt: number; keystrokesAfterClear: number; mappingUserInteractedTrusted: boolean; validateClicked: boolean; validateScheduled: boolean; radiosApplied: boolean; sawSimActiveSwal: boolean; validateBtnWaitCount: number }} */ ({
       phase: "idle",
       editClicked: false,
       editClickScheduled: false,
@@ -515,6 +517,7 @@
       validateScheduled: false,
       radiosApplied: false,
       sawSimActiveSwal: false,
+      validateBtnWaitCount: 0,
     }),
     s3: /** @type {{
       phase: string;
@@ -682,6 +685,7 @@
   function scheduleStep2Validate() {
     if (state.s2.validateScheduled || state.s2.validateClicked) return;
     state.s2.validateScheduled = true;
+    state.s2.validateBtnWaitCount = 0;
 
     function attemptValidate() {
       const st = stepEl("2");
@@ -718,8 +722,19 @@
         return;
       }
       const valBtn = findValidateBtn(st);
+      if (!(valBtn instanceof HTMLElement) || valBtn.textContent.trim() !== "Validate") {
+        state.s2.validateBtnWaitCount += 1;
+        if (state.s2.validateBtnWaitCount <= 24) {
+          window.setTimeout(attemptValidate, 100);
+          return;
+        }
+        wfmLog("step 2: Validate button label not ready — abort scheduled validate");
+        state.s2.validateScheduled = false;
+        state.s2.phase = "mapping";
+        return;
+      }
       state.s2.phase = "swal_wait";
-      if (valBtn) wfmClick(valBtn, "step 2: click Validate (ICCID)");
+      wfmClick(valBtn, "step 2: click Validate (ICCID)");
       state.s2.validateClicked = true;
       attachSwalObserver();
     }
@@ -799,6 +814,7 @@
         validateScheduled: false,
         radiosApplied: false,
         sawSimActiveSwal: false,
+        validateBtnWaitCount: 0,
       };
       if (state.swalObserver) {
         state.swalObserver.disconnect();
@@ -846,6 +862,7 @@
             const st2 = stepEl("2");
             const ed = st2 && findEditBtn(st2);
             if (!st2 || !isVisible(st2) || state.s2.phase !== "idle" || !ed) return;
+            if (ed.textContent.trim() !== "Edit") return;
             wfmClick(ed, "step 2: click Edit");
             state.s2.editClicked = true;
             state.s2.editClickedAt = Date.now();
