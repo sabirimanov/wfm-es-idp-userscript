@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         WFM ES IDP helpers
 // @namespace    https://github.com/sabirimanov/wfm-es-idp-userscript
-// @version      0.2.8
+// @version      0.2.9
 // @description  Automate pre-install modal serial capture, checklist steps 0–6 and 8, HES polling
 // @author       you
 // @homepageURL  https://github.com/sabirimanov/wfm-es-idp-userscript
@@ -452,11 +452,21 @@
   function runStep0() {
     const step = stepEl("0");
     const visible = !!(step && isVisible(step));
-    updateStepVisibility("0", visible);
+    updateStepVisibility("0", visible, () => {
+      const n = nextStepBtn();
+      if (n) delete n.dataset.wfmS0NextDone;
+    });
     if (!visible) return;
     runStepAutofillChain("0", ACTION_DELAY_MS, [
       () => setRadio("Sm IMEI Verified", "Yes"),
       () => setRadio("Sm Metrology Verified", "Yes"),
+      () => {
+        const n = nextStepBtn();
+        if (n && !n.dataset.wfmS0NextDone) {
+          n.dataset.wfmS0NextDone = "1";
+          clickEl(n);
+        }
+      },
     ]);
   }
 
