@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         WFM ES IDP helpers
 // @namespace    https://github.com/sabirimanov/wfm-es-idp-userscript
-// @version      0.5.6
+// @version      0.5.7
 // @description  Automate pre-install modal serial capture, checklist steps 0–6 and 8, HES polling
 // @author       you
 // @homepageURL  https://github.com/sabirimanov/wfm-es-idp-userscript
@@ -28,12 +28,23 @@
   const WFM_UI_LOCALE = "az";
 
   /**
-   * Per-locale label rules. Only nodes matched by `path` are updated.
-   * - Default: set `textContent` = `text` (use for real &lt;label&gt;, headings, spans — not for inputs’ `.value`).
-   * - If `attribute` is set: `setAttribute(attribute, text)` only (e.g. `data-label` when the app reads title from there).
-   * Prefer selectors scoped to a step, e.g. `.checklist-step[data-step="1"] …`, to avoid touching the wrong node.
+   * Per-locale label rules. Only nodes matched by `path` are updated (no input `.value` / no events).
+   * - Default: `textContent = text` (replaces all descendant text; removes child elements).
+   * - `attribute`: `setAttribute(attribute, text)` only.
+   * - `html: true`: `innerHTML = text` (you control markup; XSS risk only if `text` is untrusted).
+   * - `textNodeOnly: true`: replace only one **direct** child `Text` node so sibling elements stay intact,
+   *   e.g. `&lt;p&gt; hello &lt;span&gt;world&lt;/span&gt;&lt;/p&gt;` → set `text` on the first text run only.
+   * - `textNodeIndex` (optional, default `0`): which direct child text node (0 = first `TEXT_NODE` among `childNodes`).
+   * Precedence: `attribute` → `textNodeOnly` → `html` → default `textContent`.
    *
-   * @typedef {{ path: string; text: string; attribute?: string }} WfmTranslationRule
+   * @typedef {{
+   *   path: string;
+   *   text: string;
+   *   attribute?: string;
+   *   html?: boolean;
+   *   textNodeOnly?: boolean;
+   *   textNodeIndex?: number;
+   * }} WfmTranslationRule
    * @type {Record<string, WfmTranslationRule[]>}
    */
   const WFM_TRANSLATION_RULES = {
@@ -46,6 +57,21 @@
       { path: '#statusTypeDropdown option[value="old"]', text: "Köhnə" },
       { path: '#deviceIdWrapper label', text: "Seriya nömrəsi (QR kod)" },
       { path: "#validateBtnId", text: "Yoxlamaq" },
+      { path: "#validatedAssetDetails h4", text: "Sayğac məlumatları" },
+      { path: '.checklist-step[data-step="1"] > div > div > h4', text: "Addım 2 / 9", textNodeOnly: true, textNodeIndex: 0 },
+      { path: '.checklist-step[data-step="1"] > div > div > h4 > span', text: "Fiziki müayinə", textNodeOnly: true, textNodeIndex: 0 },
+      { path: '.checklist-step[data-step="1"] > div > div > p.italic', text: "Əgər yoxlama siyahısındakı hər hansı bir elementin mənfi və ya uyğun olmayan dəyəri varsa, Qeyd doldurulmalıdır." },
+      { path: '.checklist-step[data-step="1"] > div:nth-child(2) > div:nth-child(1) > label:nth-child(1)', text: "Sayğacın seriya nömrəsi ekran (əgər varsa) və ya ön panel ilə", textNodeOnly: true, textNodeIndex: 0 },
+      { path: '.checklist-step[data-step="1"] > div:nth-child(2) > div:nth-child(2) > label:nth-child(1)', text: "Sayğac korpusunun vəziyyəti", textNodeOnly: true, textNodeIndex: 0 },
+      { path: '.checklist-step[data-step="1"] > div:nth-child(2) > div:nth-child(3) > label:nth-child(1)', text: "Sayğac ekranının vəziyyəti (əgər varsa)", textNodeOnly: true, textNodeIndex: 0 },
+      { path: '.checklist-step[data-step="1"] > div:nth-child(2) > div:nth-child(1) > div > label:nth-of-type(1) > span', text: "Eynidir" },
+      { path: '.checklist-step[data-step="1"] > div:nth-child(2) > div:nth-child(1) > div > label:nth-of-type(2) > span', text: "Fərqlidir" },
+      { path: '.checklist-step[data-step="1"] > div:nth-child(2) > div:nth-child(2) > div > label:nth-of-type(1) > span', text: "Zədəlidir" },
+      { path: '.checklist-step[data-step="1"] > div:nth-child(2) > div:nth-child(2) > div > label:nth-of-type(2) > span', text: "Sağlamdır" },
+      { path: '.checklist-step[data-step="1"] select[name="Sm Display Function"] > option:nth-child(1)', text: "Seçin" },
+      { path: '.checklist-step[data-step="1"] select[name="Sm Display Function"] > option:nth-child(2)', text: "İşləyir" },
+      { path: '.checklist-step[data-step="1"] select[name="Sm Display Function"] > option:nth-child(3)', text: "İşləmir" },
+      { path: '.checklist-step[data-step="1"] select[name="Sm Display Function"] > option:nth-child(4)', text: "Mövcud deyil" },
     ],
   };
 
@@ -1223,6 +1249,23 @@
     ]);
   }
 
+  /**
+   * @param {Element} el
+   * @param {number} index
+   * @returns {Text | null}
+   */
+  function wfmNthDirectTextNode(el, index) {
+    let n = 0;
+    for (let i = 0; i < el.childNodes.length; i++) {
+      const node = el.childNodes[i];
+      if (node.nodeType === Node.TEXT_NODE) {
+        if (n === index) return /** @type {Text} */ (node);
+        n += 1;
+      }
+    }
+    return null;
+  }
+
   /** Apply `WFM_TRANSLATION_RULES[WFM_UI_LOCALE]`: labels / display attributes only. */
   function applyWfmTranslations() {
     const rules = WFM_TRANSLATION_RULES[WFM_UI_LOCALE];
@@ -1240,10 +1283,24 @@
       }
       if (!(el instanceof Element)) continue;
       const attr = rule.attribute;
+      const textNodeOnly = rule.textNodeOnly === true;
+      const useHtml = rule.html === true;
+      const textNodeIndex =
+        typeof rule.textNodeIndex === "number" && rule.textNodeIndex >= 0 ? Math.floor(rule.textNodeIndex) : 0;
+
       if (attr) {
         if (!(el instanceof HTMLElement)) continue;
         if (el.getAttribute(attr) === t) continue;
         el.setAttribute(attr, t);
+      } else if (textNodeOnly) {
+        const tn = wfmNthDirectTextNode(el, textNodeIndex);
+        if (!tn) continue;
+        if (tn.nodeValue === t) continue;
+        tn.nodeValue = t;
+      } else if (useHtml) {
+        if (!(el instanceof HTMLElement)) continue;
+        if (el.innerHTML === t) continue;
+        el.innerHTML = t;
       } else {
         if (el.textContent === t) continue;
         el.textContent = t;
