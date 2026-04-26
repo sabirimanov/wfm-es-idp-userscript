@@ -50,6 +50,11 @@
   const WFM_TRANSLATION_RULES = {
     en: [],
     az: [
+      { path: "#prevStepBtn", text: "Geri" },
+      { path: "#nextStepBtn", text: "Davam et" },
+      { path: "#previewChecklistBtn", text: "Məlumatları yoxla" },
+
+
       { path: "#preInstallationModelModal #modalHeader", text: "Yeni yoxlama" },
       { path: "#addNewPreCheckListBtn", text: "Yeni Sayğac Yoxlama" },
       { path: "label:has(+ select#deviceTypeDropdown)", text: "Cihaz növü" },
@@ -58,8 +63,8 @@
       { path: '#deviceIdWrapper label', text: "Seriya nömrəsi (QR kod)" },
       { path: "#validateBtnId", text: "Yoxlamaq" },
       { path: "#validatedAssetDetails h4", text: "Sayğac məlumatları" },
-      { path: '.checklist-step[data-step="1"] > div > div > h4', text: "Addım 2 / 9", textNodeOnly: true, textNodeIndex: 0 },
-      { path: '.checklist-step[data-step="1"] > div > div > h4 > span', text: "Fiziki müayinə", textNodeOnly: true, textNodeIndex: 0 },
+      { path: '.checklist-step[data-step="1"] > div > div > h4', text: "Addım 2 / 9  ", textNodeOnly: true, textNodeIndex: 0 },
+      { path: '.checklist-step[data-step="1"] > div > div > h4 > span', text: " Fiziki müayinə", textNodeOnly: true, textNodeIndex: 0 },
       { path: '.checklist-step[data-step="1"] > div > div > p.italic', text: "Əgər yoxlama siyahısındakı hər hansı bir elementin mənfi və ya uyğun olmayan dəyəri varsa, Qeyd doldurulmalıdır." },
       { path: '.checklist-step[data-step="1"] > div:nth-child(2) > div:nth-child(1) > label:nth-child(1)', text: "Sayğacın seriya nömrəsi ekran (əgər varsa) və ya ön panel ilə", textNodeOnly: true, textNodeIndex: 0 },
       { path: '.checklist-step[data-step="1"] > div:nth-child(2) > div:nth-child(2) > label:nth-child(1)', text: "Sayğac korpusunun vəziyyəti", textNodeOnly: true, textNodeIndex: 0 },
