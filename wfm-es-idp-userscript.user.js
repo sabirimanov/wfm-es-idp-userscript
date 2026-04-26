@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         WFM ES IDP helpers
 // @namespace    https://github.com/sabirimanov/wfm-es-idp-userscript
-// @version      0.2.5
+// @version      0.2.7
 // @description  Automate pre-install modal serial capture, checklist steps 0–6 and 8, HES polling
 // @author       you
 // @homepageURL  https://github.com/sabirimanov/wfm-es-idp-userscript
@@ -22,6 +22,8 @@
   const HES_FIRST_CHECK_MS = 1000;
   /** Pause between scripted UI actions (ms) */
   const ACTION_DELAY_MS = 250;
+  /** After last keystroke from HID scanner, wait this long then normalize #deviceId */
+  const DEVICE_ID_SCAN_IDLE_MS = 300;
 
   /** @param {Element | null | undefined} el */
   function isVisible(el) {
@@ -113,25 +115,19 @@
   }
 
   /**
-   * Stable serial extraction from partial/complete JSON QR payload (HID types char-by-char).
-   * Uses the "SerialNumber":"…" prefix or the same pattern with flexible whitespace.
+   * Extract meter serial from full QR JSON (call only after scan has finished).
+   * Prefers regex on complete string so trailing JSON is stripped in one shot.
    * @param {string} raw
    */
   function extractSerialFromPayload(raw) {
-    const key = '"SerialNumber":"';
-    const idx = raw.indexOf(key);
-    if (idx !== -1) {
-      let out = "";
-      for (let i = idx + key.length; i < raw.length; i++) {
-        const c = raw[i];
-        if (c === '"') break;
-        out += c;
-        if (out.length >= SERIAL_MAX_LEN) break;
-      }
-      return out;
+    const t = raw.trim();
+    let m = t.match(/"SerialNumber"\s*:\s*"([^"]*)"/i);
+    if (!m) m = t.match(/"SerialNumber"\s*:\s*"([^"]*)/i);
+    if (m) {
+      const s = m[1].slice(0, SERIAL_MAX_LEN);
+      return s;
     }
-    const m = raw.match(/"SerialNumber"\s*:\s*"([^"]*)/);
-    if (m) return m[1].slice(0, SERIAL_MAX_LEN);
+    if (!/["{]/.test(t) && /^[A-Za-z0-9]{1,16}$/.test(t)) return t.slice(0, SERIAL_MAX_LEN);
     return "";
   }
 
@@ -213,6 +209,7 @@
       pullDefaultText: "",
     }),
     swalObserver: /** @type {MutationObserver | null} */ (null),
+    deviceIdDebounceTimer: 0,
   };
 
   function clearS3Timers() {
@@ -230,26 +227,36 @@
   function handleDeviceIdInput(ev) {
     const input = ev.target;
     if (!(input instanceof HTMLInputElement) || input.id !== "deviceId") return;
+    if (state.deviceIdDebounceTimer) {
+      window.clearTimeout(state.deviceIdDebounceTimer);
+      state.deviceIdDebounceTimer = 0;
+    }
+    state.deviceIdDebounceTimer = window.setTimeout(() => {
+      state.deviceIdDebounceTimer = 0;
+      flushDeviceIdAfterScanIdle(input);
+    }, DEVICE_ID_SCAN_IDLE_MS);
+  }
+
+  /** Run after no new characters for DEVICE_ID_SCAN_IDLE_MS — keeps serial only, then validate */
+  function flushDeviceIdAfterScanIdle(input) {
+    if (!(input instanceof HTMLInputElement) || input.id !== "deviceId") return;
+    if (!document.body.contains(input)) return;
     const raw = input.value;
     const serial = extractSerialFromPayload(raw);
+
     if (serial.length < SERIAL_MAX_LEN) {
       delete input.dataset.wfmAutoValidated;
     }
-    if (serial.length === 0) {
-      return;
-    }
-    if (serial !== raw) {
+
+    if (serial.length > 0 && input.value !== serial) {
       setInputValueAndNotify(input, serial);
       try {
         input.setSelectionRange(serial.length, serial.length);
       } catch (_) {
         /* ignore */
       }
-      if (serial.length === SERIAL_MAX_LEN) {
-        tryValidateDeviceId(input);
-      }
-      return;
     }
+
     if (serial.length === SERIAL_MAX_LEN) {
       tryValidateDeviceId(input);
     }
@@ -267,6 +274,7 @@
     if (state.deviceIdListenersInstalled) return;
     state.deviceIdListenersInstalled = true;
     document.addEventListener("input", handleDeviceIdInput, false);
+    document.addEventListener("change", handleDeviceIdInput, false);
   }
 
   function handleMappingInput(ev) {
