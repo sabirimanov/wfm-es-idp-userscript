@@ -39,13 +39,12 @@
   const WFM_TRANSLATION_RULES = {
     en: [],
     az: [
+      { path: "#preInstallationModelModal #modalHeader", text: "Yeni yoxlama" },
       { path: "#addNewPreCheckListBtn", text: "Yeni Sayğac Yoxlama" },
-      { path: "label:has(+ select#statusTypeDropdown)", text: "Cihaz növü" },
+      { path: "label:has(+ select#deviceTypeDropdown)", text: "Cihaz növü" },
       { path: '#statusTypeDropdown option[value="new"]', text: "Yeni" },
       { path: '#statusTypeDropdown option[value="old"]', text: "Köhnə" },
-      { path: 'label[for="deviceId"]', text: "Seriya nömrəsi (QR kod)" },
-      { path: "label:has(#deviceId)", text: "Seriya nömrəsi (QR kod)" },
-      { path: "label:has(+ input#deviceId)", text: "Seriya nömrəsi (QR kod)" },
+      { path: '#deviceIdWrapper label', text: "Seriya nömrəsi (QR kod)" },
       { path: "#validateBtnId", text: "Yoxlamaq" },
     ],
   };
