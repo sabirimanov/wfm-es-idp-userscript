@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         WFM ES IDP helpers
 // @namespace    https://github.com/sabirimanov/wfm-es-idp-userscript
-// @version      0.2.9
+// @version      0.3.1
 // @description  Automate pre-install modal serial capture, checklist steps 0–6 and 8, HES polling
 // @author       you
 // @homepageURL  https://github.com/sabirimanov/wfm-es-idp-userscript
@@ -20,8 +20,8 @@
   const ICCID_LEN = 20;
   const HES_POLL_MS = 30_000;
   const HES_FIRST_CHECK_MS = 1000;
-  /** Pause between scripted UI actions (ms) */
-  const ACTION_DELAY_MS = 250;
+  /** Pause between scripted UI actions and checklist substeps (ms) */
+  const ACTION_DELAY_MS = 500;
   /** After last keystroke from HID scanner, wait this long then normalize #deviceId */
   const DEVICE_ID_SCAN_IDLE_MS = 300;
 
@@ -298,12 +298,13 @@
     preModalWasHidden: true,
     deviceIdListenersInstalled: false,
     mappingInputListenersInstalled: false,
-    s2: /** @type {{ phase: string; editClicked: boolean; editClickScheduled: boolean; mappingCleared: boolean; mappingClearScheduled: boolean; validateClicked: boolean; validateScheduled: boolean; radiosApplied: boolean }} */ ({
+    s2: /** @type {{ phase: string; editClicked: boolean; editClickScheduled: boolean; mappingCleared: boolean; mappingClearScheduled: boolean; mappingUserInteractedTrusted: boolean; validateClicked: boolean; validateScheduled: boolean; radiosApplied: boolean }} */ ({
       phase: "idle",
       editClicked: false,
       editClickScheduled: false,
       mappingCleared: false,
       mappingClearScheduled: false,
+      mappingUserInteractedTrusted: false,
       validateClicked: false,
       validateScheduled: false,
       radiosApplied: false,
@@ -395,6 +396,10 @@
     if (!st || !isVisible(st) || state.s2.phase !== "mapping") return;
     if (!state.s2.mappingCleared) return;
     if (state.s2.validateClicked || state.s2.validateScheduled) return;
+    if (ev.isTrusted) {
+      state.s2.mappingUserInteractedTrusted = true;
+    }
+    if (!state.s2.mappingUserInteractedTrusted) return;
     if (input.value.trim().length < ICCID_LEN) return;
     scheduleStep2Validate();
   }
@@ -452,10 +457,8 @@
   function runStep0() {
     const step = stepEl("0");
     const visible = !!(step && isVisible(step));
-    updateStepVisibility("0", visible, () => {
-      const n = nextStepBtn();
-      if (n) delete n.dataset.wfmS0NextDone;
-    });
+    /* Leave data-wfm-s0-next-done on #nextStepBtn when navigating back so we do not auto-click Next again. */
+    updateStepVisibility("0", visible);
     if (!visible) return;
     runStepAutofillChain("0", ACTION_DELAY_MS, [
       () => setRadio("Sm IMEI Verified", "Yes"),
@@ -473,14 +476,11 @@
   function runStep1() {
     const step = stepEl("1");
     const visible = !!(step && isVisible(step));
-    updateStepVisibility("1", visible, () => {
-      const n = nextStepBtn();
-      if (n) delete n.dataset.wfmS1NextDone;
-    });
+    updateStepVisibility("1", visible);
     if (!visible) return;
     runStepAutofillChain("1", ACTION_DELAY_MS, [
       () => setRadio("Sm Serial Verified", "Match"),
-      () => setRadio("Sm Body Condition", "Not Damaged"),
+      // () => setRadio("Sm Body Condition", "Not Damaged"),
       () => setSelect("Sm Display Function", "OK"),
       () => {
         const n = nextStepBtn();
@@ -503,6 +503,7 @@
         editClickScheduled: false,
         mappingCleared: false,
         mappingClearScheduled: false,
+        mappingUserInteractedTrusted: false,
         validateClicked: false,
         validateScheduled: false,
         radiosApplied: false,
@@ -553,21 +554,17 @@
           if (!(mi instanceof HTMLInputElement)) return;
           setInputValueAndNotify(mi, "");
           state.s2.mappingCleared = true;
+          state.s2.mappingUserInteractedTrusted = false;
           mi.focus();
-          if (mi.value.trim().length >= ICCID_LEN) {
-            scheduleStep2Validate();
-          }
         }, ACTION_DELAY_MS);
       }
-      if (
-        state.s2.mappingCleared &&
-        mapInput.value.trim().length >= ICCID_LEN &&
-        !state.s2.validateClicked &&
-        !state.s2.validateScheduled
-      ) {
-        scheduleStep2Validate();
-      }
     }
+  }
+
+  /** Step 2 SIM / mapping pipeline not finished — do not run step 3+ automation */
+  function step2PipelineBlocking() {
+    const step = stepEl("2");
+    return !!(step && isVisible(step) && state.s2.phase !== "done");
   }
 
   function swalActiveSim() {
@@ -714,8 +711,6 @@
         delete el.dataset.wfmS3YesChainDone;
         delete el.dataset.wfmS3YesChainPending;
       }
-      const n = nextStepBtn();
-      if (n) delete n.dataset.wfmS3NextDone;
       state.s3 = {
         phase: "idle",
         pollTickId: null,
@@ -835,10 +830,7 @@
   function runStep4() {
     const step = stepEl("4");
     const visible = !!(step && isVisible(step));
-    updateStepVisibility("4", visible, () => {
-      const n = nextStepBtn();
-      if (n) delete n.dataset.wfmS4NextDone;
-    });
+    updateStepVisibility("4", visible);
     if (!visible) return;
     runStepAutofillChain("4", ACTION_DELAY_MS, [
       () => {
@@ -864,10 +856,7 @@
   function runStep5() {
     const step = stepEl("5");
     const visible = !!(step && isVisible(step));
-    updateStepVisibility("5", visible, () => {
-      const n = nextStepBtn();
-      if (n) delete n.dataset.wfmS5NextDone;
-    });
+    updateStepVisibility("5", visible);
     if (!visible) return;
     runStepAutofillChain("5", ACTION_DELAY_MS, [
       () => setRadio("Sm Battery Status", "OK"),
@@ -884,10 +873,7 @@
   function runStep6() {
     const step = stepEl("6");
     const visible = !!(step && isVisible(step));
-    updateStepVisibility("6", visible, () => {
-      const n = nextStepBtn();
-      if (n) delete n.dataset.wfmS6NextDone;
-    });
+    updateStepVisibility("6", visible);
     if (!visible) return;
     runStepAutofillChain("6", ACTION_DELAY_MS, [
       () => setRadio("Sm IP Configured", "Yes"),
@@ -932,11 +918,14 @@
 
     const step3 = stepEl("3");
     const hesBlocking = step3 && isVisible(step3) && state.s3.phase === "polling" && !state.s3.hesResolved;
+    const s2Blocking = step2PipelineBlocking();
 
     runStep2();
-    runStep3();
+    if (!s2Blocking) {
+      runStep3();
+    }
 
-    if (!hesBlocking) {
+    if (!hesBlocking && !s2Blocking) {
       runStep4();
       runStep5();
       runStep6();
@@ -950,7 +939,7 @@
     debounceTimer = window.setTimeout(() => {
       debounceTimer = 0;
       tick();
-    }, 120);
+    }, 200);
   }
 
   installDeviceIdListeners();
