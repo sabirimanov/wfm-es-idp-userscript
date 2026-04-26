@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         WFM ES IDP helpers
 // @namespace    https://github.com/sabirimanov/wfm-es-idp-userscript
-// @version      0.5.7
+// @version      0.5.8
 // @description  Automate pre-install modal serial capture, checklist steps 0–6 and 8, HES polling
 // @author       you
 // @homepageURL  https://github.com/sabirimanov/wfm-es-idp-userscript
@@ -63,9 +63,19 @@
       { path: '#deviceIdWrapper label', text: "Seriya nömrəsi (QR kod)" },
       { path: "#validateBtnId", text: "Yoxlamaq" },
       { path: "#validatedAssetDetails h4", text: "Sayğac məlumatları" },
-      { path: '.checklist-step[data-step="1"] > div > div > h4', text: "Addım 2 / 9  ", textNodeOnly: true, textNodeIndex: 0 },
+
+
+      { path: '.checklist-step[data-step="0"] > div > div > h4', text: "Addım 1 / 9  ", textNodeOnly: true, textNodeIndex: 0 },
+      { path: '.checklist-step[data-step="0"] > div:nth-child(2) > div:nth-child(1) > label:nth-child(1)', text: "Smart Sayğacın IMEI qeydiyyatı təsdiqlənib", textNodeOnly: true, textNodeIndex: 0 },
+      { path: '.checklist-step[data-step="0"] > div:nth-child(2) > div:nth-child(2) > label:nth-child(1)', text: "Metrologiya rəsmiləşdirilməsi təsdiqlənib", textNodeOnly: true, textNodeIndex: 0 },
+      { path: '.checklist-step[data-step="0"] > div:nth-child(2) > div:nth-child(1) > div > label:nth-of-type(1) > span', text: "Bəli" },
+      { path: '.checklist-step[data-step="0"] > div:nth-child(2) > div:nth-child(1) > div > label:nth-of-type(2) > span', text: "Xeyr" },
+      { path: '.checklist-step[data-step="0"] > div:nth-child(2) > div:nth-child(2) > div > label:nth-of-type(1) > span', text: "Bəli" },
+      { path: '.checklist-step[data-step="0"] > div:nth-child(2) > div:nth-child(2) > div > label:nth-of-type(2) > span', text: "Xeyr" },
+
+      { path: '.checklist-step[data-step="1"] > div > div > h4', text: "Addım 2 / 9:  ", textNodeOnly: true, textNodeIndex: 0 },
       { path: '.checklist-step[data-step="1"] > div > div > h4 > span', text: " Fiziki müayinə", textNodeOnly: true, textNodeIndex: 0 },
-      { path: '.checklist-step[data-step="1"] > div > div > p.italic', text: "Əgər yoxlama siyahısındakı hər hansı bir elementin mənfi və ya uyğun olmayan dəyəri varsa, Qeyd doldurulmalıdır." },
+      { path: '.checklist-step > div > div > p.italic', text: "Əgər yoxlama siyahısındakı hər hansı bir elementin mənfi və ya uyğun olmayan dəyəri varsa, Qeyd doldurulmalıdır." },
       { path: '.checklist-step[data-step="1"] > div:nth-child(2) > div:nth-child(1) > label:nth-child(1)', text: "Sayğacın seriya nömrəsi ekran (əgər varsa) və ya ön panel ilə", textNodeOnly: true, textNodeIndex: 0 },
       { path: '.checklist-step[data-step="1"] > div:nth-child(2) > div:nth-child(2) > label:nth-child(1)', text: "Sayğac korpusunun vəziyyəti", textNodeOnly: true, textNodeIndex: 0 },
       { path: '.checklist-step[data-step="1"] > div:nth-child(2) > div:nth-child(3) > label:nth-child(1)', text: "Sayğac ekranının vəziyyəti (əgər varsa)", textNodeOnly: true, textNodeIndex: 0 },
@@ -77,8 +87,30 @@
       { path: '.checklist-step[data-step="1"] select[name="Sm Display Function"] > option:nth-child(2)', text: "İşləyir" },
       { path: '.checklist-step[data-step="1"] select[name="Sm Display Function"] > option:nth-child(3)', text: "İşləmir" },
       { path: '.checklist-step[data-step="1"] select[name="Sm Display Function"] > option:nth-child(4)', text: "Mövcud deyil" },
+
+
+
+
+      { path: '.checklist-step[data-step="2"] > div > div > h4', text: "Addım 3 / 9:  ", textNodeOnly: true, textNodeIndex: 0 },
+      { path: '.checklist-step[data-step="2"] > div > div > h4 > span', text: " Sayğacda SIM kartın quraşdırılması", textNodeOnly: true, textNodeIndex: 0 },
+      { path: '.checklist-step[data-step="2"] > div:nth-child(2) > div:nth-child(1) > label:nth-child(1)', text: "Sistemdə sayğacla əlaqələndirilmiş ICCID (SIM kart)", textNodeOnly: true, textNodeIndex: 0 },
+      { path: '.checklist-step[data-step="2"] > div:nth-child(2) > div:nth-child(2) > label:nth-child(1)', text: "SIM kart operator tərəfindən aktivləşdirilib", textNodeOnly: true, textNodeIndex: 0 },
+      { path: '.checklist-step[data-step="2"] > div:nth-child(2) > div:nth-child(1) > div > label:nth-of-type(1) > span', text: "Bəli" },
+      { path: '.checklist-step[data-step="2"] > div:nth-child(2) > div:nth-child(1) > div > label:nth-of-type(2) > span', text: "Xeyr" },
+      { path: '.checklist-step[data-step="2"] > div:nth-child(2) > div:nth-child(2) > div > label:nth-of-type(1) > span', text: "Bəli" },
+      { path: '.checklist-step[data-step="2"] > div:nth-child(2) > div:nth-child(2) > div > label:nth-of-type(2) > span', text: "Xeyr" },
     ],
   };
+
+  /**
+   * Optional Tailwind-style class tweaks (runs each tick; safe if nodes missing).
+   * @typedef {{ path: string; removeClasses?: string[]; addClasses?: string[] }} WfmClassTweakRule
+   * @type {WfmClassTweakRule[]}
+   */
+  const WFM_CLASS_TWEAKS = [
+    { path: "#validatedAssetDetails > div", removeClasses: ["p-5"], addClasses: ["p-3"] },
+    { path: "#validatedAssetDetails > div > .grid", removeClasses: ["gap-6"], addClasses: ["gap-2"] },
+  ];
 
   const LS_VALVE_PREFIX = "wfm_es_idp:valve_status:";
   const SERIAL_MAX_LEN = 16;
@@ -1313,6 +1345,25 @@
     }
   }
 
+  function applyWfmClassTweaks() {
+    for (const tw of WFM_CLASS_TWEAKS) {
+      let el = null;
+      try {
+        el = document.querySelector(tw.path);
+      } catch (err) {
+        if (DEBUG_SCRIPT_ACTIONS) console.warn("[WFM ES IDP] class tweak invalid selector:", tw.path, err);
+        continue;
+      }
+      if (!(el instanceof HTMLElement)) continue;
+      for (const c of tw.removeClasses || []) {
+        if (c) el.classList.remove(c);
+      }
+      for (const c of tw.addClasses || []) {
+        if (c) el.classList.add(c);
+      }
+    }
+  }
+
   function runStep8() {
     const step = stepEl("8");
     const visible = !!(step && isVisible(step));
@@ -1358,6 +1409,7 @@
     }
 
     applyWfmTranslations();
+    applyWfmClassTweaks();
   }
 
   let debounceTimer = 0;
