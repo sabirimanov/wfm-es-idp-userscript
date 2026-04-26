@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         WFM ES IDP helpers
 // @namespace    https://github.com/sabirimanov/wfm-es-idp-userscript
-// @version      0.4.0
+// @version      0.4.2
 // @description  Automate pre-install modal serial capture, checklist steps 0–6 and 8, HES polling
 // @author       you
 // @homepageURL  https://github.com/sabirimanov/wfm-es-idp-userscript
@@ -23,15 +23,17 @@
   /** Pause between scripted UI actions within a step (ms) */
   const ACTION_DELAY_MS = 550;
   /** Wait after a checklist step becomes visible before first automation (ms) */
-  const STEP_SETTLE_MS = 900;
+  const STEP_SETTLE_MS = 700;
   /** Extra wait after last radio/select before clicking #nextStepBtn (ms) */
-  const NEXT_AFTER_FORM_MS = 550;
+  const NEXT_AFTER_FORM_MS = 780;
   /** After Edit on mapping row, wait before clearing .mapping-input (ms) */
-  const MAPPING_EDIT_TO_CLEAR_MS = 800;
+  const MAPPING_EDIT_TO_CLEAR_MS = 950;
   /** Min time after clear before Validate may run (ms) */
-  const MAPPING_MIN_MS_AFTER_CLEAR = 550;
+  const MAPPING_MIN_MS_AFTER_CLEAR = 850;
   /** Idle debounce on .mapping-input before scheduling Validate (ms) */
-  const MAPPING_ICCID_IDLE_MS = 500;
+  const MAPPING_ICCID_IDLE_MS = 750;
+  /** Min time after Edit click before Validate may run (ms) */
+  const MAPPING_MIN_AFTER_EDIT_MS = 1200;
   /** After last keystroke from HID scanner, wait this long then normalize #deviceId */
   const DEVICE_ID_SCAN_IDLE_MS = 300;
   /** Swal “Checklist saved successfully” → wait then reload (ms) */
@@ -290,6 +292,41 @@
   const hesBtn = () => document.getElementById("btnGetHesDetails");
   const hesGrid = () => document.getElementById("hesDynamicGrid");
 
+  /**
+   * After Pull HES has started on step 3, block delayed #nextStepBtn from other steps
+   * until step 3 is finished (avoids Next before pull / grid; does not block 2→3 advance).
+   */
+  function step3hesFlowBlocksNonStep3Next() {
+    const s3 = stepEl("3");
+    if (!s3 || !isVisible(s3)) return false;
+    if (!state.s3.pullAttempted) return false;
+    if (state.s3.phase === "completed") return false;
+    return true;
+  }
+
+  /**
+   * Click #nextStepBtn only if that checklist step is still visible (stale timers)
+   * and step 3 HES is not mid-flight (prevents Next before Pull / grid ready).
+   * @param {string} stepId
+   * @param {string} doneAttr dataset property e.g. "wfmS1NextDone"
+   * @param {number} [delayMs] default NEXT_AFTER_FORM_MS; use 0 when caller already delayed
+   * @param {() => void} [onAfterClick] runs only after a successful click (e.g. mark s3 completed)
+   */
+  function clickNextIfStepActive(stepId, doneAttr, delayMs, onAfterClick) {
+    const wait = delayMs === undefined ? NEXT_AFTER_FORM_MS : delayMs;
+    window.setTimeout(() => {
+      if (stepId !== "3" && step3hesFlowBlocksNonStep3Next()) return;
+      const st = stepEl(stepId);
+      if (!st || !isVisible(st)) return;
+      const n = nextStepBtn();
+      if (!n) return;
+      if (doneAttr && (/** @type {Record<string, string>} */ (n.dataset))[doneAttr]) return;
+      if (doneAttr) (/** @type {Record<string, string>} */ (n.dataset))[doneAttr] = "1";
+      clickEl(n);
+      if (typeof onAfterClick === "function") onAfterClick();
+    }, wait);
+  }
+
   /** @param {string} step */
   function stepEl(step) {
     return document.querySelector(`.checklist-step[data-step="${step}"]`);
@@ -320,13 +357,15 @@
     preModalWasHidden: true,
     deviceIdListenersInstalled: false,
     mappingInputListenersInstalled: false,
-    s2: /** @type {{ phase: string; editClicked: boolean; editClickScheduled: boolean; mappingCleared: boolean; mappingClearScheduled: boolean; mappingClearedAt: number; mappingUserInteractedTrusted: boolean; validateClicked: boolean; validateScheduled: boolean; radiosApplied: boolean }} */ ({
+    s2: /** @type {{ phase: string; editClicked: boolean; editClickScheduled: boolean; mappingCleared: boolean; mappingClearScheduled: boolean; mappingClearedAt: number; editClickedAt: number; keystrokesAfterClear: number; mappingUserInteractedTrusted: boolean; validateClicked: boolean; validateScheduled: boolean; radiosApplied: boolean }} */ ({
       phase: "idle",
       editClicked: false,
       editClickScheduled: false,
       mappingCleared: false,
       mappingClearScheduled: false,
       mappingClearedAt: 0,
+      editClickedAt: 0,
+      keystrokesAfterClear: 0,
       mappingUserInteractedTrusted: false,
       validateClicked: false,
       validateScheduled: false,
@@ -464,6 +503,7 @@
     if (state.s2.validateClicked || state.s2.validateScheduled) return;
     if (ev.isTrusted) {
       state.s2.mappingUserInteractedTrusted = true;
+      state.s2.keystrokesAfterClear += 1;
     }
     if (!state.s2.mappingUserInteractedTrusted) return;
     if (state.mappingValidateDebounceTimer) {
@@ -477,6 +517,7 @@
       if (!(mi instanceof HTMLInputElement)) return;
       if (state.s2.phase !== "mapping" || !state.s2.mappingCleared) return;
       if (state.s2.validateClicked || state.s2.validateScheduled) return;
+      if (state.s2.keystrokesAfterClear < 1) return;
       if (Date.now() - state.s2.mappingClearedAt < MAPPING_MIN_MS_AFTER_CLEAR) return;
       if (mi.value.trim().length < ICCID_LEN) return;
       if (!state.s2.mappingUserInteractedTrusted) return;
@@ -494,31 +535,49 @@
   function scheduleStep2Validate() {
     if (state.s2.validateScheduled || state.s2.validateClicked) return;
     state.s2.validateScheduled = true;
-    state.s2.phase = "swal_wait";
-    window.setTimeout(() => {
+
+    function attemptValidate() {
       const st = stepEl("2");
       if (!st || !isVisible(st)) {
         state.s2.validateScheduled = false;
         state.s2.phase = "mapping";
         return;
       }
-      if (state.s2.validateClicked) return;
+      if (state.s2.validateClicked) {
+        state.s2.validateScheduled = false;
+        return;
+      }
+      if (state.s2.phase !== "mapping") {
+        state.s2.validateScheduled = false;
+        return;
+      }
+      const waitEdit = MAPPING_MIN_AFTER_EDIT_MS - (Date.now() - state.s2.editClickedAt);
+      if (state.s2.editClickedAt && waitEdit > 0) {
+        window.setTimeout(attemptValidate, waitEdit + 40);
+        return;
+      }
+      const waitClear = MAPPING_MIN_MS_AFTER_CLEAR - (Date.now() - state.s2.mappingClearedAt);
+      if (waitClear > 0) {
+        window.setTimeout(attemptValidate, waitClear + 40);
+        return;
+      }
       const mi = st.querySelector("input.mapping-input");
       if (!(mi instanceof HTMLInputElement) || mi.value.trim().length < ICCID_LEN) {
         state.s2.validateScheduled = false;
-        state.s2.phase = "mapping";
         return;
       }
-      if (Date.now() - state.s2.mappingClearedAt < MAPPING_MIN_MS_AFTER_CLEAR) {
+      if (state.s2.keystrokesAfterClear < 1) {
         state.s2.validateScheduled = false;
-        state.s2.phase = "mapping";
         return;
       }
       const valBtn = findValidateBtn(st);
+      state.s2.phase = "swal_wait";
       if (valBtn) clickEl(valBtn);
       state.s2.validateClicked = true;
       attachSwalObserver();
-    }, NEXT_AFTER_FORM_MS);
+    }
+
+    window.setTimeout(attemptValidate, NEXT_AFTER_FORM_MS);
   }
 
   function ensurePreModalFocus() {
@@ -554,13 +613,7 @@
     runStepAutofillChain("0", [
       () => setRadio("Sm IMEI Verified", "Yes"),
       () => setRadio("Sm Metrology Verified", "Yes"),
-      () => {
-        const n = nextStepBtn();
-        if (n && !n.dataset.wfmS0NextDone) {
-          n.dataset.wfmS0NextDone = "1";
-          clickEl(n);
-        }
-      },
+      () => clickNextIfStepActive("0", "wfmS0NextDone"),
     ]);
   }
 
@@ -570,16 +623,12 @@
     updateStepVisibility("1", visible);
     if (!visible) return;
     runStepAutofillChain("1", [
+      () => setSelect("Sm Display Function", "OK"),
+      () => {},
+      () => {},
       () => setRadio("Sm Serial Verified", "Match"),
       // () => setRadio("Sm Body Condition", "Not Damaged"),
-      () => setSelect("Sm Display Function", "OK"),
-      () => {
-        const n = nextStepBtn();
-        if (n && !n.dataset.wfmS1NextDone) {
-          n.dataset.wfmS1NextDone = "1";
-          clickEl(n);
-        }
-      },
+      () => clickNextIfStepActive("1", "wfmS1NextDone"),
     ]);
   }
 
@@ -595,6 +644,8 @@
         mappingCleared: false,
         mappingClearScheduled: false,
         mappingClearedAt: 0,
+        editClickedAt: 0,
+        keystrokesAfterClear: 0,
         mappingUserInteractedTrusted: false,
         validateClicked: false,
         validateScheduled: false,
@@ -636,6 +687,7 @@
           if (!st || !isVisible(st) || state.s2.phase !== "idle") return;
           clickEl(edit);
           state.s2.editClicked = true;
+          state.s2.editClickedAt = Date.now();
           state.s2.phase = "mapping";
         }, ACTION_DELAY_MS);
       }
@@ -652,6 +704,7 @@
           state.s2.mappingCleared = true;
           state.s2.mappingClearedAt = Date.now();
           state.s2.mappingUserInteractedTrusted = false;
+          state.s2.keystrokesAfterClear = 0;
           mi.focus();
         }, MAPPING_EDIT_TO_CLEAR_MS);
       }
@@ -720,11 +773,8 @@
     const step = () => {
       attempts += 1;
       if (!swalActiveSim()) {
-        window.setTimeout(() => {
-          const next = nextStepBtn();
-          if (next) clickEl(next);
-          state.s2.phase = "done";
-        }, NEXT_AFTER_FORM_MS);
+        clickNextIfStepActive("2", "wfmS2SimNextDone", 120);
+        state.s2.phase = "done";
         return;
       }
       clickSwalConfirmRobust();
@@ -732,11 +782,8 @@
         window.setTimeout(step, tickMs);
       } else {
         clickSwalConfirmRobust();
-        window.setTimeout(() => {
-          const next = nextStepBtn();
-          if (next) clickEl(next);
-          state.s2.phase = "done";
-        }, NEXT_AFTER_FORM_MS);
+        clickNextIfStepActive("2", "wfmS2SimNextDone", 120);
+        state.s2.phase = "done";
       }
     };
     step();
@@ -921,14 +968,11 @@
     t += ACTION_DELAY_MS + NEXT_AFTER_FORM_MS;
 
     scheduleStepAction("3", token, t, () => {
-      const n = nextStepBtn();
-      if (n && !n.dataset.wfmS3NextDone) {
-        n.dataset.wfmS3NextDone = "1";
-        clickEl(n);
-      }
-      state.s3.phase = "completed";
-      delete step.dataset.wfmS3YesChainPending;
-      step.dataset.wfmS3YesChainDone = "1";
+      clickNextIfStepActive("3", "wfmS3NextDone", 150, () => {
+        state.s3.phase = "completed";
+        delete step.dataset.wfmS3YesChainPending;
+        step.dataset.wfmS3YesChainDone = "1";
+      });
     });
   }
 
@@ -948,13 +992,7 @@
         }
         setSelect("Sm Valve Status", valve === "Open" ? "Open" : "Closed");
       },
-      () => {
-        const n = nextStepBtn();
-        if (n && !n.dataset.wfmS4NextDone) {
-          n.dataset.wfmS4NextDone = "1";
-          clickEl(n);
-        }
-      },
+      () => clickNextIfStepActive("4", "wfmS4NextDone"),
     ]);
   }
 
@@ -965,13 +1003,7 @@
     if (!visible) return;
     runStepAutofillChain("5", [
       () => setRadio("Sm Battery Status", "OK"),
-      () => {
-        const n = nextStepBtn();
-        if (n && !n.dataset.wfmS5NextDone) {
-          n.dataset.wfmS5NextDone = "1";
-          clickEl(n);
-        }
-      },
+      () => clickNextIfStepActive("5", "wfmS5NextDone"),
     ]);
   }
 
@@ -984,13 +1016,7 @@
       () => setRadio("Sm IP Configured", "Yes"),
       () => setRadio("Sm Port Configured", "Yes"),
       () => setRadio("Sm Schedule Set", "Yes"),
-      () => {
-        const n = nextStepBtn();
-        if (n && !n.dataset.wfmS6NextDone) {
-          n.dataset.wfmS6NextDone = "1";
-          clickEl(n);
-        }
-      },
+      () => clickNextIfStepActive("6", "wfmS6NextDone"),
     ]);
   }
 
