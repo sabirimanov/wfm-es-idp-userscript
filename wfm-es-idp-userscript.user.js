@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         WFM ES IDP helpers
 // @namespace    https://github.com/sabirimanov/wfm-es-idp-userscript
-// @version      0.4.2
+// @version      0.5.2
 // @description  Automate pre-install modal serial capture, checklist steps 0–6 and 8, HES polling
 // @author       you
 // @homepageURL  https://github.com/sabirimanov/wfm-es-idp-userscript
@@ -15,6 +15,9 @@
 (function () {
   "use strict";
 
+  /** Set true to log every scripted action with a global order number in the console */
+  const DEBUG_SCRIPT_ACTIONS = true;
+
   const LS_VALVE_PREFIX = "wfm_es_idp:valve_status:";
   const SERIAL_MAX_LEN = 16;
   const ICCID_LEN = 20;
@@ -22,22 +25,33 @@
   const HES_FIRST_CHECK_MS = 1000;
   /** Pause between scripted UI actions within a step (ms) */
   const ACTION_DELAY_MS = 550;
-  /** Wait after a checklist step becomes visible before first automation (ms) */
-  const STEP_SETTLE_MS = 700;
-  /** Extra wait after last radio/select before clicking #nextStepBtn (ms) */
-  const NEXT_AFTER_FORM_MS = 780;
-  /** After Edit on mapping row, wait before clearing .mapping-input (ms) */
-  const MAPPING_EDIT_TO_CLEAR_MS = 950;
-  /** Min time after clear before Validate may run (ms) */
-  const MAPPING_MIN_MS_AFTER_CLEAR = 850;
+  /** Optional micro-delay before first batch (ms); set 0 to run fills as soon as the step is visible */
+  const STEP_SETTLE_MS = 0;
+  /** Wait after all fills in a step before clicking #nextStepBtn (ms) */
+  const STEP_NEXT_AFTER_FILL_MS = 500;
+  /** Legacy: used where only a click delay is needed (swal dismiss → Next, mapping validate gate) */
+  const NEXT_AFTER_FORM_MS = 400;
+  /** Small delay before programmatic Edit / Pull clicks so DOM is ready (ms) */
+  const ACTION_CLICK_DELAY_MS = 80;
+  /** Min time after mapping row is ready for input before Validate may run (ms) */
+  const MAPPING_MIN_MS_AFTER_CLEAR = 120;
   /** Idle debounce on .mapping-input before scheduling Validate (ms) */
-  const MAPPING_ICCID_IDLE_MS = 750;
+  const MAPPING_ICCID_IDLE_MS = 500;
   /** Min time after Edit click before Validate may run (ms) */
-  const MAPPING_MIN_AFTER_EDIT_MS = 1200;
+  const MAPPING_MIN_AFTER_EDIT_MS = 400;
   /** After last keystroke from HID scanner, wait this long then normalize #deviceId */
   const DEVICE_ID_SCAN_IDLE_MS = 300;
   /** Swal “Checklist saved successfully” → wait then reload (ms) */
   const CHECKLIST_SAVED_RELOAD_MS = 1000;
+
+  let wfmActionSeq = 0;
+
+  /** @param {string} message */
+  function wfmLog(message) {
+    if (!DEBUG_SCRIPT_ACTIONS) return;
+    wfmActionSeq += 1;
+    console.log(`[WFM ES IDP] ${wfmActionSeq}. ${message}`);
+  }
 
   /** @param {Element | null | undefined} el */
   function isVisible(el) {
@@ -53,6 +67,7 @@
     el.checked = true;
     el.dispatchEvent(new Event("input", { bubbles: true }));
     el.dispatchEvent(new Event("change", { bubbles: true }));
+    wfmLog(`set radio "${name}" → ${value}`);
   }
 
   /** @param {string} name @param {string} value */
@@ -63,6 +78,7 @@
     el.value = value;
     el.dispatchEvent(new Event("input", { bubbles: true }));
     el.dispatchEvent(new Event("change", { bubbles: true }));
+    wfmLog(`set select "${name}" → ${value}`);
   }
 
   /** @param {string} s */
@@ -186,6 +202,16 @@
     }
   }
 
+  /**
+   * Programmatic click with optional debug label (fills use setRadio/setSelect without click).
+   * @param {HTMLElement | null | undefined} el
+   * @param {string} [label]
+   */
+  function wfmClick(el, label) {
+    if (label) wfmLog(label);
+    clickEl(el);
+  }
+
   /** @param {string} stepId */
   function bumpStepAutofillToken(stepId) {
     state.stepAutofillTokens[stepId] = (state.stepAutofillTokens[stepId] ?? 0) + 1;
@@ -207,8 +233,8 @@
   }
 
   /**
-   * Run actions with delays: settle before first action, gaps between middle actions,
-   * extra gap before the last action (usually #nextStepBtn) so the app can validate inputs.
+   * Run fills synchronously in one batch (no delay between them), then optional delay before
+   * the last action (usually #nextStepBtn). Single callback = fill-only, no Next.
    * @param {string} stepId
    * @param {(() => void)[]} actions
    */
@@ -219,24 +245,33 @@
     if (step.dataset.wfmAutofillPending === "1") return;
     step.dataset.wfmAutofillPending = "1";
     const token = state.stepAutofillTokens[stepId] ?? 0;
-    let t = STEP_SETTLE_MS;
-    for (let i = 0; i < actions.length; i++) {
-      const act = actions[i];
-      const isLast = i === actions.length - 1;
-      if (isLast) {
-        t += NEXT_AFTER_FORM_MS;
-      }
-      scheduleStepAction(stepId, token, t, () => {
-        act();
-        if (isLast) {
-          step.dataset.wfmAutofillDone = "1";
-          delete step.dataset.wfmAutofillPending;
-        }
-      });
-      if (!isLast) {
-        t += ACTION_DELAY_MS;
-      }
+    if (actions.length === 0) {
+      delete step.dataset.wfmAutofillPending;
+      return;
     }
+    if (actions.length === 1) {
+      scheduleStepAction(stepId, token, STEP_SETTLE_MS, () => {
+        wfmLog(`step ${stepId}: run single action`);
+        actions[0]();
+        step.dataset.wfmAutofillDone = "1";
+        delete step.dataset.wfmAutofillPending;
+      });
+      return;
+    }
+    const last = actions[actions.length - 1];
+    const fills = actions.slice(0, -1);
+    let t = STEP_SETTLE_MS;
+    scheduleStepAction(stepId, token, t, () => {
+      wfmLog(`step ${stepId}: batch fill (${fills.length} callback(s))`);
+      for (const fn of fills) fn();
+    });
+    t += STEP_NEXT_AFTER_FILL_MS;
+    scheduleStepAction(stepId, token, t, () => {
+      wfmLog(`step ${stepId}: after-fill action (e.g. Next)`);
+      last();
+      step.dataset.wfmAutofillDone = "1";
+      delete step.dataset.wfmAutofillPending;
+    });
   }
 
   /** @param {string} stepId */
@@ -322,7 +357,7 @@
       if (!n) return;
       if (doneAttr && (/** @type {Record<string, string>} */ (n.dataset))[doneAttr]) return;
       if (doneAttr) (/** @type {Record<string, string>} */ (n.dataset))[doneAttr] = "1";
-      clickEl(n);
+      wfmClick(n, `step ${stepId}: click #nextStepBtn`);
       if (typeof onAfterClick === "function") onAfterClick();
     }, wait);
   }
@@ -350,6 +385,46 @@
     return null;
   }
 
+  /** @param {string} name @param {string} value */
+  function isRadioChecked(name, value) {
+    const el = document.querySelector(
+      `input[type="radio"][name="${cssAttr(name)}"][value="${cssAttr(value)}"]`
+    );
+    return el instanceof HTMLInputElement && el.type === "radio" && el.checked;
+  }
+
+  /** Apply step 3 radios from HES grid (instant, no delays). */
+  function fillStep3RadiosFromHesGrid() {
+    const g = hesGrid();
+    if (!g) return;
+    setRadio("Sm Comm Registered", "Yes");
+    if (gridCellSpanText(g, 5) !== "Not Available") {
+      setRadio("Sm Reads Received", "Yes");
+      setRadio("Sm Reads Verified", "Match");
+    }
+    const seventh = gridCellSpanText(g, 6);
+    const meterId = (deviceIdInput() && deviceIdInput().value) || "";
+    if (seventh === "Open" && meterId) {
+      try {
+        localStorage.setItem(LS_VALVE_PREFIX + meterId, "Open");
+      } catch (_) {
+        /* ignore */
+      }
+    }
+  }
+
+  /** True when HES-driven radios match grid (all required options checked). */
+  function step3HesRadiosMatchGrid() {
+    const g = hesGrid();
+    if (!g) return false;
+    if (!isRadioChecked("Sm Comm Registered", "Yes")) return false;
+    if (gridCellSpanText(g, 5) !== "Not Available") {
+      if (!isRadioChecked("Sm Reads Received", "Yes")) return false;
+      if (!isRadioChecked("Sm Reads Verified", "Match")) return false;
+    }
+    return true;
+  }
+
   const state = {
     stepAutofillTokens: /** @type {Record<string, number>} */ ({}),
     /** Tracks visibility so we reset autofill only on leave, not every tick while hidden */
@@ -357,12 +432,11 @@
     preModalWasHidden: true,
     deviceIdListenersInstalled: false,
     mappingInputListenersInstalled: false,
-    s2: /** @type {{ phase: string; editClicked: boolean; editClickScheduled: boolean; mappingCleared: boolean; mappingClearScheduled: boolean; mappingClearedAt: number; editClickedAt: number; keystrokesAfterClear: number; mappingUserInteractedTrusted: boolean; validateClicked: boolean; validateScheduled: boolean; radiosApplied: boolean }} */ ({
+    s2: /** @type {{ phase: string; editClicked: boolean; editClickScheduled: boolean; mappingCleared: boolean; mappingClearedAt: number; editClickedAt: number; keystrokesAfterClear: number; mappingUserInteractedTrusted: boolean; validateClicked: boolean; validateScheduled: boolean; radiosApplied: boolean; sawSimActiveSwal: boolean }} */ ({
       phase: "idle",
       editClicked: false,
       editClickScheduled: false,
       mappingCleared: false,
-      mappingClearScheduled: false,
       mappingClearedAt: 0,
       editClickedAt: 0,
       keystrokesAfterClear: 0,
@@ -370,6 +444,7 @@
       validateClicked: false,
       validateScheduled: false,
       radiosApplied: false,
+      sawSimActiveSwal: false,
     }),
     s3: /** @type {{
       phase: string;
@@ -377,12 +452,14 @@
       hesResolved: boolean;
       pullDefaultText: string;
       pullAttempted: boolean;
+      yesPollAttempts: number;
     }} */ ({
       phase: "idle",
       pollTickId: null,
       hesResolved: false,
       pullDefaultText: "",
       pullAttempted: false,
+      yesPollAttempts: 0,
     }),
     swalObserver: /** @type {MutationObserver | null} */ (null),
     checklistSavedObserver: /** @type {MutationObserver | null} */ (null),
@@ -484,7 +561,7 @@
     if (input.dataset.wfmAutoValidated === "1") return;
     input.dataset.wfmAutoValidated = "1";
     const v = validateBtn();
-    if (v) clickEl(v);
+    if (v) wfmClick(v, "pre-install: click #validateBtnId (device id)");
   }
 
   function installDeviceIdListeners() {
@@ -572,12 +649,12 @@
       }
       const valBtn = findValidateBtn(st);
       state.s2.phase = "swal_wait";
-      if (valBtn) clickEl(valBtn);
+      if (valBtn) wfmClick(valBtn, "step 2: click Validate (ICCID)");
       state.s2.validateClicked = true;
       attachSwalObserver();
     }
 
-    window.setTimeout(attemptValidate, NEXT_AFTER_FORM_MS);
+    window.setTimeout(attemptValidate, 0);
   }
 
   function ensurePreModalFocus() {
@@ -611,9 +688,11 @@
     updateStepVisibility("0", visible);
     if (!visible) return;
     runStepAutofillChain("0", [
-      () => setRadio("Sm IMEI Verified", "Yes"),
-      () => setRadio("Sm Metrology Verified", "Yes"),
-      () => clickNextIfStepActive("0", "wfmS0NextDone"),
+      () => {
+        setRadio("Sm IMEI Verified", "Yes");
+        setRadio("Sm Metrology Verified", "Yes");
+      },
+      () => clickNextIfStepActive("0", "wfmS0NextDone", 0),
     ]);
   }
 
@@ -622,13 +701,13 @@
     const visible = !!(step && isVisible(step));
     updateStepVisibility("1", visible);
     if (!visible) return;
+    /* No #nextStepBtn: e.g. Sm Body Condition needs manual input when not scripted. */
     runStepAutofillChain("1", [
-      () => setSelect("Sm Display Function", "OK"),
-      () => {},
-      () => {},
-      () => setRadio("Sm Serial Verified", "Match"),
-      // () => setRadio("Sm Body Condition", "Not Damaged"),
-      () => clickNextIfStepActive("1", "wfmS1NextDone"),
+      () => {
+        setSelect("Sm Display Function", "OK");
+        setRadio("Sm Serial Verified", "Match");
+        // () => setRadio("Sm Body Condition", "Not Damaged");
+      },
     ]);
   }
 
@@ -642,7 +721,6 @@
         editClicked: false,
         editClickScheduled: false,
         mappingCleared: false,
-        mappingClearScheduled: false,
         mappingClearedAt: 0,
         editClickedAt: 0,
         keystrokesAfterClear: 0,
@@ -650,6 +728,7 @@
         validateClicked: false,
         validateScheduled: false,
         radiosApplied: false,
+        sawSimActiveSwal: false,
       };
       if (state.swalObserver) {
         state.swalObserver.disconnect();
@@ -667,8 +746,8 @@
       if (step.dataset.wfmS2RadiosPending !== "1") {
         step.dataset.wfmS2RadiosPending = "1";
         const token = state.stepAutofillTokens["2"] ?? 0;
-        scheduleStepAction("2", token, ACTION_DELAY_MS, () => setRadio("Sm ICCID Mapped", "Yes"));
-        scheduleStepAction("2", token, ACTION_DELAY_MS * 2, () => {
+        scheduleStepAction("2", token, STEP_SETTLE_MS, () => {
+          setRadio("Sm ICCID Mapped", "Yes");
           setRadio("Sm SIM Activated", "Yes");
           state.s2.radiosApplied = true;
           delete step.dataset.wfmS2RadiosPending;
@@ -676,37 +755,46 @@
       }
     }
 
-    const mapInput = step.querySelector("input.mapping-input");
-
+    /**
+     * Step 2 mapping: clear ICCID field → click Edit → focus → wait 20 chars → Validate;
+     * #nextStepBtn only after “SIM is active” swal flow (see dismissSimActiveSwalThenNext).
+     */
     if (state.s2.phase === "idle" && state.s2.radiosApplied) {
       const edit = findEditBtn(step);
+      const mapInput = step.querySelector("input.mapping-input");
       if (edit && !state.s2.editClicked && !state.s2.editClickScheduled) {
         state.s2.editClickScheduled = true;
         window.setTimeout(() => {
           const st = stepEl("2");
           if (!st || !isVisible(st) || state.s2.phase !== "idle") return;
-          clickEl(edit);
-          state.s2.editClicked = true;
-          state.s2.editClickedAt = Date.now();
-          state.s2.phase = "mapping";
-        }, ACTION_DELAY_MS);
-      }
-    }
-
-    if (state.s2.phase === "mapping" && mapInput instanceof HTMLInputElement) {
-      if (!state.s2.mappingClearScheduled) {
-        state.s2.mappingClearScheduled = true;
-        window.setTimeout(() => {
-          const st = stepEl("2");
-          const mi = st && st.querySelector("input.mapping-input");
-          if (!(mi instanceof HTMLInputElement)) return;
-          setInputValueAndNotify(mi, "");
-          state.s2.mappingCleared = true;
-          state.s2.mappingClearedAt = Date.now();
-          state.s2.mappingUserInteractedTrusted = false;
-          state.s2.keystrokesAfterClear = 0;
-          mi.focus();
-        }, MAPPING_EDIT_TO_CLEAR_MS);
+          const mi0 = st.querySelector("input.mapping-input");
+          if (mi0 instanceof HTMLInputElement && mi0.value.trim() !== "") {
+            setInputValueAndNotify(mi0, "");
+            wfmLog("step 2: clear mapping-input (before Edit)");
+          }
+          window.setTimeout(() => {
+            const st2 = stepEl("2");
+            const ed = st2 && findEditBtn(st2);
+            if (!st2 || !isVisible(st2) || state.s2.phase !== "idle" || !ed) return;
+            wfmClick(ed, "step 2: click Edit");
+            state.s2.editClicked = true;
+            state.s2.editClickedAt = Date.now();
+            state.s2.phase = "mapping";
+            const mi = st2.querySelector("input.mapping-input");
+            if (mi instanceof HTMLInputElement) {
+              try {
+                mi.focus();
+              } catch (_) {
+                /* ignore */
+              }
+              wfmLog("step 2: focus mapping-input (await 20-char ICCID)");
+            }
+            state.s2.mappingCleared = true;
+            state.s2.mappingClearedAt = Date.now();
+            state.s2.mappingUserInteractedTrusted = false;
+            state.s2.keystrokesAfterClear = 0;
+          }, ACTION_CLICK_DELAY_MS);
+        }, ACTION_CLICK_DELAY_MS);
       }
     }
   }
@@ -760,11 +848,11 @@
     } catch (_) {
       /* ignore */
     }
-    clickEl(ok);
+    wfmClick(ok, "step 2: click swal confirm (SIM is active)");
     return true;
   }
 
-  /** Until SIM swal is gone, retry Ok; then Next (overlay must close first) */
+  /** Until SIM swal is gone, retry Ok; then Next only after “SIM is active” was seen */
   function dismissSimActiveSwalThenNext() {
     let attempts = 0;
     const maxAttempts = 45;
@@ -773,7 +861,15 @@
     const step = () => {
       attempts += 1;
       if (!swalActiveSim()) {
-        clickNextIfStepActive("2", "wfmS2SimNextDone", 120);
+        if (!state.s2.sawSimActiveSwal) {
+          wfmLog("step 2: swal closed without seeing “SIM is active” — skip #nextStepBtn (retry Validate if needed)");
+          state.s2.validateClicked = false;
+          state.s2.validateScheduled = false;
+          state.s2.phase = "mapping";
+          return;
+        }
+        wfmLog("step 2: “SIM is active” swal dismissed — schedule Next");
+        clickNextIfStepActive("2", "wfmS2SimNextDone", STEP_NEXT_AFTER_FILL_MS);
         state.s2.phase = "done";
         return;
       }
@@ -782,7 +878,9 @@
         window.setTimeout(step, tickMs);
       } else {
         clickSwalConfirmRobust();
-        clickNextIfStepActive("2", "wfmS2SimNextDone", 120);
+        if (state.s2.sawSimActiveSwal) {
+          clickNextIfStepActive("2", "wfmS2SimNextDone", STEP_NEXT_AFTER_FILL_MS);
+        }
         state.s2.phase = "done";
       }
     };
@@ -792,14 +890,19 @@
   function attachSwalObserver() {
     if (state.swalObserver) return;
     let started = false;
-    state.swalObserver = new MutationObserver(() => {
-      if (!swalActiveSim() || started) return;
-      started = true;
+    const onSimSwalSeen = () => {
+      state.s2.sawSimActiveSwal = true;
+      wfmLog("step 2: swal visible with text “SIM is active”");
       if (state.swalObserver) {
         state.swalObserver.disconnect();
         state.swalObserver = null;
       }
       window.setTimeout(() => dismissSimActiveSwalThenNext(), NEXT_AFTER_FORM_MS);
+    };
+    state.swalObserver = new MutationObserver(() => {
+      if (!swalActiveSim() || started) return;
+      started = true;
+      onSimSwalSeen();
     });
     state.swalObserver.observe(document.documentElement, {
       childList: true,
@@ -809,11 +912,7 @@
     });
     if (swalActiveSim()) {
       started = true;
-      if (state.swalObserver) {
-        state.swalObserver.disconnect();
-        state.swalObserver = null;
-      }
-      window.setTimeout(() => dismissSimActiveSwalThenNext(), NEXT_AFTER_FORM_MS);
+      onSimSwalSeen();
     }
   }
 
@@ -831,7 +930,7 @@
     state.s3.pollTickId = setInterval(() => {
       secondsLeft -= 1;
       if (secondsLeft <= 0) {
-        clickEl(btn);
+        wfmClick(btn, "step 3: HES poll timer — click Pull HES");
         secondsLeft = Math.floor(HES_POLL_MS / 1000);
       }
       btn.textContent = `${state.s3.pullDefaultText} (${secondsLeft})`;
@@ -861,6 +960,7 @@
         hesResolved: false,
         pullDefaultText: "",
         pullAttempted: false,
+        yesPollAttempts: 0,
       };
     }
     state.stepLastVisible["3"] = visible;
@@ -877,7 +977,7 @@
       const rawLabel = (pull.textContent || "").trim();
       state.s3.pullDefaultText =
         rawLabel.replace(/\s*\(\d+\)\s*$/, "").trim() || "Pull HES Data";
-      clickEl(pull);
+      wfmClick(pull, "step 3: click Pull HES (#btnGetHesDetails)");
       state.s3.phase = "wait_first";
       setTimeout(() => {
         if (state.s3.phase !== "wait_first") return;
@@ -929,51 +1029,36 @@
 
     step.dataset.wfmS3YesChainPending = "1";
     const token = state.stepAutofillTokens["3"] ?? 0;
-    let t = STEP_SETTLE_MS;
+    const maxPolls = 100;
 
-    scheduleStepAction("3", token, t, () => setRadio("Sm Comm Registered", "Yes"));
-    t += ACTION_DELAY_MS;
-
-    scheduleStepAction("3", token, t, () => {
-      const g = hesGrid();
-      if (!g) return;
-      if (gridCellSpanText(g, 5) !== "Not Available") {
-        setRadio("Sm Reads Received", "Yes");
-      }
-    });
-    t += ACTION_DELAY_MS;
-
-    scheduleStepAction("3", token, t, () => {
-      const g = hesGrid();
-      if (!g) return;
-      if (gridCellSpanText(g, 5) !== "Not Available") {
-        setRadio("Sm Reads Verified", "Match");
-      }
-    });
-    t += ACTION_DELAY_MS;
-
-    scheduleStepAction("3", token, t, () => {
-      const g = hesGrid();
-      if (!g) return;
-      const seventh = gridCellSpanText(g, 6);
-      const meterId = (deviceIdInput() && deviceIdInput().value) || "";
-      if (seventh === "Open" && meterId) {
-        try {
-          localStorage.setItem(LS_VALVE_PREFIX + meterId, "Open");
-        } catch (_) {
-          /* ignore */
+    function tryFillAndMaybeNext() {
+      state.s3.yesPollAttempts += 1;
+      const st = stepEl("3");
+      if (!st || !isVisible(st)) return;
+      fillStep3RadiosFromHesGrid();
+      if (!step3HesRadiosMatchGrid()) {
+        if (state.s3.yesPollAttempts < maxPolls) {
+          scheduleStepAction("3", token, 120, tryFillAndMaybeNext);
+        } else {
+          wfmLog("step 3: stopped polling HES radios (max attempts)");
         }
+        return;
       }
-    });
-    t += ACTION_DELAY_MS + NEXT_AFTER_FORM_MS;
+      wfmLog("step 3: all HES radios match grid — schedule #nextStepBtn");
+      clickNextIfStepActive(
+        "3",
+        "wfmS3NextDone",
+        STEP_NEXT_AFTER_FILL_MS,
+        () => {
+          state.s3.phase = "completed";
+          delete step.dataset.wfmS3YesChainPending;
+          step.dataset.wfmS3YesChainDone = "1";
+        }
+      );
+    }
 
-    scheduleStepAction("3", token, t, () => {
-      clickNextIfStepActive("3", "wfmS3NextDone", 150, () => {
-        state.s3.phase = "completed";
-        delete step.dataset.wfmS3YesChainPending;
-        step.dataset.wfmS3YesChainDone = "1";
-      });
-    });
+    state.s3.yesPollAttempts = 0;
+    scheduleStepAction("3", token, STEP_SETTLE_MS, tryFillAndMaybeNext);
   }
 
   function runStep4() {
@@ -992,7 +1077,7 @@
         }
         setSelect("Sm Valve Status", valve === "Open" ? "Open" : "Closed");
       },
-      () => clickNextIfStepActive("4", "wfmS4NextDone"),
+      () => clickNextIfStepActive("4", "wfmS4NextDone", 0),
     ]);
   }
 
@@ -1003,7 +1088,7 @@
     if (!visible) return;
     runStepAutofillChain("5", [
       () => setRadio("Sm Battery Status", "OK"),
-      () => clickNextIfStepActive("5", "wfmS5NextDone"),
+      () => clickNextIfStepActive("5", "wfmS5NextDone", 0),
     ]);
   }
 
@@ -1013,10 +1098,12 @@
     updateStepVisibility("6", visible);
     if (!visible) return;
     runStepAutofillChain("6", [
-      () => setRadio("Sm IP Configured", "Yes"),
-      () => setRadio("Sm Port Configured", "Yes"),
-      () => setRadio("Sm Schedule Set", "Yes"),
-      () => clickNextIfStepActive("6", "wfmS6NextDone"),
+      () => {
+        setRadio("Sm IP Configured", "Yes");
+        setRadio("Sm Port Configured", "Yes");
+        setRadio("Sm Schedule Set", "Yes");
+      },
+      () => clickNextIfStepActive("6", "wfmS6NextDone", 0),
     ]);
   }
 
@@ -1036,7 +1123,7 @@
         const preview = document.getElementById("previewChecklistBtn");
         if (preview && !preview.dataset.wfmPreviewClicked) {
           preview.dataset.wfmPreviewClicked = "1";
-          clickEl(preview);
+          wfmClick(preview, "step 8: click preview checklist");
         }
       },
     ]);
@@ -1072,6 +1159,10 @@
       debounceTimer = 0;
       tick();
     }, 200);
+  }
+
+  if (DEBUG_SCRIPT_ACTIONS) {
+    console.log("[WFM ES IDP] DEBUG_SCRIPT_ACTIONS = true — numbered action log enabled");
   }
 
   installDeviceIdListeners();
