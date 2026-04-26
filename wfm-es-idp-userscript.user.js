@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         WFM ES IDP helpers
 // @namespace    https://github.com/sabirimanov/wfm-es-idp-userscript
-// @version      0.5.8
+// @version      0.5.9
 // @description  Automate pre-install modal serial capture, checklist steps 0–6 and 8, HES polling
 // @author       you
 // @homepageURL  https://github.com/sabirimanov/wfm-es-idp-userscript
@@ -53,6 +53,17 @@
       { path: "#prevStepBtn", text: "Geri" },
       { path: "#nextStepBtn", text: "Davam et" },
       { path: "#previewChecklistBtn", text: "Məlumatları yoxla" },
+      { path: "#saveChecklistBtn", text: "Təsdiqlə" },
+
+      { path: '.checklist-step[data-step="0"] > div > div > p.italic', text: "Əgər yoxlama siyahısındakı hər hansı bir elementin mənfi və ya uyğun olmayan dəyəri varsa, Qeyd doldurulmalıdır." },
+      { path: '.checklist-step[data-step="1"] > div > div > p.italic', text: "Əgər yoxlama siyahısındakı hər hansı bir elementin mənfi və ya uyğun olmayan dəyəri varsa, Qeyd doldurulmalıdır." },
+      { path: '.checklist-step[data-step="2"] > div > div > p.italic', text: "Əgər yoxlama siyahısındakı hər hansı bir elementin mənfi və ya uyğun olmayan dəyəri varsa, Qeyd doldurulmalıdır." },
+      { path: '.checklist-step[data-step="3"] > div > div > p.italic', text: "Əgər yoxlama siyahısındakı hər hansı bir elementin mənfi və ya uyğun olmayan dəyəri varsa, Qeyd doldurulmalıdır." },
+      { path: '.checklist-step[data-step="4"] > div > div > p.italic', text: "Əgər yoxlama siyahısındakı hər hansı bir elementin mənfi və ya uyğun olmayan dəyəri varsa, Qeyd doldurulmalıdır." },
+      { path: '.checklist-step[data-step="5"] > div > div > p.italic', text: "Əgər yoxlama siyahısındakı hər hansı bir elementin mənfi və ya uyğun olmayan dəyəri varsa, Qeyd doldurulmalıdır." },
+      { path: '.checklist-step[data-step="6"] > div > div > p.italic', text: "Əgər yoxlama siyahısındakı hər hansı bir elementin mənfi və ya uyğun olmayan dəyəri varsa, Qeyd doldurulmalıdır." },
+      { path: '.checklist-step[data-step="7"] > div > div > p.italic', text: "Əgər yoxlama siyahısındakı hər hansı bir elementin mənfi və ya uyğun olmayan dəyəri varsa, Qeyd doldurulmalıdır." },
+      { path: '.checklist-step[data-step="8"] > div > div > p.italic', text: "Əgər yoxlama siyahısındakı hər hansı bir elementin mənfi və ya uyğun olmayan dəyəri varsa, Qeyd doldurulmalıdır." },
 
 
       { path: "#preInstallationModelModal #modalHeader", text: "Yeni yoxlama" },
@@ -75,7 +86,6 @@
 
       { path: '.checklist-step[data-step="1"] > div > div > h4', text: "Addım 2 / 9:  ", textNodeOnly: true, textNodeIndex: 0 },
       { path: '.checklist-step[data-step="1"] > div > div > h4 > span', text: " Fiziki müayinə", textNodeOnly: true, textNodeIndex: 0 },
-      { path: '.checklist-step > div > div > p.italic', text: "Əgər yoxlama siyahısındakı hər hansı bir elementin mənfi və ya uyğun olmayan dəyəri varsa, Qeyd doldurulmalıdır." },
       { path: '.checklist-step[data-step="1"] > div:nth-child(2) > div:nth-child(1) > label:nth-child(1)', text: "Sayğacın seriya nömrəsi ekran (əgər varsa) və ya ön panel ilə", textNodeOnly: true, textNodeIndex: 0 },
       { path: '.checklist-step[data-step="1"] > div:nth-child(2) > div:nth-child(2) > label:nth-child(1)', text: "Sayğac korpusunun vəziyyəti", textNodeOnly: true, textNodeIndex: 0 },
       { path: '.checklist-step[data-step="1"] > div:nth-child(2) > div:nth-child(3) > label:nth-child(1)', text: "Sayğac ekranının vəziyyəti (əgər varsa)", textNodeOnly: true, textNodeIndex: 0 },
@@ -99,17 +109,101 @@
       { path: '.checklist-step[data-step="2"] > div:nth-child(2) > div:nth-child(1) > div > label:nth-of-type(2) > span', text: "Xeyr" },
       { path: '.checklist-step[data-step="2"] > div:nth-child(2) > div:nth-child(2) > div > label:nth-of-type(1) > span', text: "Bəli" },
       { path: '.checklist-step[data-step="2"] > div:nth-child(2) > div:nth-child(2) > div > label:nth-of-type(2) > span', text: "Xeyr" },
+
+
+
+      { path: '.checklist-step[data-step="3"] > div > div > h4', text: "Addım 4 / 9:  ", textNodeOnly: true, textNodeIndex: 0 },
+      { path: '.checklist-step[data-step="3"] > div > div > h4 > span', text: "HES ilə Məcburi Əlaqə", textNodeOnly: true, textNodeIndex: 0 },
+      { path: '.checklist-step[data-step="3"] > div:nth-child(3) > div:nth-child(1) > label:nth-child(1)', text: "Əlaqə qeydiyyatı uğurlu oldu", textNodeOnly: true, textNodeIndex: 0 },
+      { path: '.checklist-step[data-step="3"] > div:nth-child(3) > div:nth-child(2) > label:nth-child(1)', text: "HES-dən sayğac göstəriciləri alındı", textNodeOnly: true, textNodeIndex: 0 },
+      { path: '.checklist-step[data-step="3"] > div:nth-child(3) > div:nth-child(3) > label:nth-child(1)', text: "Sistemdən göstərici ekrandakı ilə", textNodeOnly: true, textNodeIndex: 0 },
+      { path: '.checklist-step[data-step="3"] > div:nth-child(3) > div:nth-child(1) > div > label:nth-of-type(1) > span', text: "Bəli" },
+      { path: '.checklist-step[data-step="3"] > div:nth-child(3) > div:nth-child(1) > div > label:nth-of-type(2) > span', text: "Xeyr" },
+      { path: '.checklist-step[data-step="3"] > div:nth-child(3) > div:nth-child(2) > div > label:nth-of-type(1) > span', text: "Bəli" },
+      { path: '.checklist-step[data-step="3"] > div:nth-child(3) > div:nth-child(2) > div > label:nth-of-type(2) > span', text: "Xeyr" },
+      { path: '.checklist-step[data-step="3"] > div:nth-child(3) > div:nth-child(3) > div > label:nth-of-type(1) > span', text: "Eynidir" },
+      { path: '.checklist-step[data-step="3"] > div:nth-child(3) > div:nth-child(3) > div > label:nth-of-type(2) > span', text: "Fərqlidir" },
+
+
+      { path: '.checklist-step[data-step="4"] > div > div > h4', text: "Addım 5 / 9:  ", textNodeOnly: true, textNodeIndex: 0 },
+      { path: '.checklist-step[data-step="4"] > div > div > h4 > span', text: "Klapanın vəziyyəti", textNodeOnly: true, textNodeIndex: 0 },
+      { path: '.checklist-step[data-step="4"] > div:nth-child(2) > div:nth-child(1) > label:nth-child(1)', text: "Sayğac klapanının vəziyyəti", textNodeOnly: true, textNodeIndex: 0 },
+      { path: '.checklist-step[data-step="4"] select[name="Sm Valve Status"] > option:nth-child(1)', text: "Seçin" },
+      { path: '.checklist-step[data-step="4"] select[name="Sm Valve Status"] > option:nth-child(2)', text: "Açıqdır" },
+      { path: '.checklist-step[data-step="4"] select[name="Sm Valve Status"] > option:nth-child(3)', text: "Bağlıdır" },
+      { path: '.checklist-step[data-step="4"] select[name="Sm Valve Status"] > option:nth-child(4)', text: "Mövcud deyil" },
+
+
+
+      { path: '.checklist-step[data-step="5"] > div > div > h4', text: "Addım 6 / 9:  ", textNodeOnly: true, textNodeIndex: 0 },
+      { path: '.checklist-step[data-step="5"] > div > div > h4 > span', text: "Batareyanın vəziyyəti", textNodeOnly: true, textNodeIndex: 0 },
+      { path: '.checklist-step[data-step="5"] > div:nth-child(2) > div:nth-child(1) > label:nth-child(1)', text: "Sayğac batareyasının vəziyyəti", textNodeOnly: true, textNodeIndex: 0 },
+      { path: '.checklist-step[data-step="5"] > div:nth-child(2) > div:nth-child(1) > div > label:nth-of-type(1) > span', text: "İşləkdir" },
+      { path: '.checklist-step[data-step="5"] > div:nth-child(2) > div:nth-child(1) > div > label:nth-of-type(2) > span', text: "Zədəlidir" },
+
+
+
+      { path: '.checklist-step[data-step="6"] > div > div > h4', text: "Addım 7 / 9:  ", textNodeOnly: true, textNodeIndex: 0 },
+      { path: '.checklist-step[data-step="6"] > div > div > h4 > span', text: "Sayğacın konfiqurasiya olunması", textNodeOnly: true, textNodeIndex: 0 },
+      { path: '.checklist-step[data-step="6"] > div:nth-child(2) > div:nth-child(1) > label:nth-child(1)', text: "IP ünvanı konfiqurasiya edildi", textNodeOnly: true, textNodeIndex: 0 },
+      { path: '.checklist-step[data-step="6"] > div:nth-child(2) > div:nth-child(2) > label:nth-child(1)', text: "Port konfiqurasiya edildi", textNodeOnly: true, textNodeIndex: 0 },
+      { path: '.checklist-step[data-step="6"] > div:nth-child(2) > div:nth-child(3) > label:nth-child(1)', text: "Cədvəl parametrləri yazıldı", textNodeOnly: true, textNodeIndex: 0 },
+      { path: '.checklist-step[data-step="6"] > div:nth-child(2) > div:nth-child(1) > div > label:nth-of-type(1) > span', text: "Bəli" },
+      { path: '.checklist-step[data-step="6"] > div:nth-child(2) > div:nth-child(1) > div > label:nth-of-type(2) > span', text: "Xeyr" },
+      { path: '.checklist-step[data-step="6"] > div:nth-child(2) > div:nth-child(2) > div > label:nth-of-type(1) > span', text: "Bəli" },
+      { path: '.checklist-step[data-step="6"] > div:nth-child(2) > div:nth-child(2) > div > label:nth-of-type(2) > span', text: "Xeyr" },
+      { path: '.checklist-step[data-step="6"] > div:nth-child(2) > div:nth-child(3) > div > label:nth-of-type(1) > span', text: "Bəli" },
+      { path: '.checklist-step[data-step="6"] > div:nth-child(2) > div:nth-child(3) > div > label:nth-of-type(2) > span', text: "FərXeyrqlidir" },
+
+
+
+
+      { path: '.checklist-step[data-step="7"] > div > div > h4', text: "Addım 8 / 9:  ", textNodeOnly: true, textNodeIndex: 0 },
+      { path: '.checklist-step[data-step="7"] > div > div > h4 > span', text: "Əlavə qeydlər", textNodeOnly: true, textNodeIndex: 0 },
+      { path: '.checklist-step[data-step="7"] > div:nth-child(2) > div:nth-child(1) > label:nth-child(1)', text: "Qeyd", textNodeOnly: true, textNodeIndex: 0 },
+
+
+
+      { path: '.checklist-step[data-step="8"] > div > div > h4', text: "Addım 9 / 9:  ", textNodeOnly: true, textNodeIndex: 0 },
+      { path: '.checklist-step[data-step="8"] > div > div > h4 > span', text: "Şəkillərin yüklənməsi", textNodeOnly: true, textNodeIndex: 0 },
+      { path: '.checklist-step[data-step="8"] > div:nth-child(2) > div:nth-child(1) > label:nth-child(1)', text: "Şəkil 1", textNodeOnly: true, textNodeIndex: 0 },
+      { path: '.checklist-step[data-step="8"] > div:nth-child(2) > div:nth-child(2) > label:nth-child(1)', text: "Şəkil 2", textNodeOnly: true, textNodeIndex: 0 },
+      { path: '.checklist-step[data-step="8"] > div:nth-child(2) > div:nth-child(3) > label:nth-child(1)', text: "Şəkil 3", textNodeOnly: true, textNodeIndex: 0 },
+
+
+      
     ],
   };
 
   /**
    * Optional Tailwind-style class tweaks (runs each tick; safe if nodes missing).
-   * @typedef {{ path: string; removeClasses?: string[]; addClasses?: string[] }} WfmClassTweakRule
+   * @typedef {{
+   *   path: string;
+   *   removeClasses?: string[];
+   *   addClasses?: string[];
+   *   matchAll?: boolean;
+   *   onlyIfTextStartsWith?: string;
+   *   revertWhenUnmatched?: boolean;
+   * }} WfmClassTweakRule
+   * - `matchAll`: use `querySelectorAll(path)` instead of `querySelector`.
+   * - `onlyIfTextStartsWith`: only apply `remove`/`add` when `textContent.trim()` starts with this string.
+   * - `revertWhenUnmatched` (with the above): if we previously tweaked a node (tracked via `data-wfm-ct`),
+   *   restore classes when text no longer matches (e.g. grid cell changes from No → Yes).
    * @type {WfmClassTweakRule[]}
    */
   const WFM_CLASS_TWEAKS = [
     { path: "#validatedAssetDetails > div", removeClasses: ["p-5"], addClasses: ["p-3"] },
     { path: "#validatedAssetDetails > div > .grid", removeClasses: ["gap-6"], addClasses: ["gap-2"] },
+    { path: "#hesStatusCard", removeClasses: ["p-5"], addClasses: ["p-3"] },
+    { path: "#hesDynamicGrid", removeClasses: ["gap-6"], addClasses: ["gap-2"] },
+    {
+      path: "#hesDynamicGrid span",
+      matchAll: true,
+      onlyIfTextStartsWith: "No",
+      revertWhenUnmatched: true,
+      removeClasses: ["text-gray-900"],
+      addClasses: ["text-red-600"],
+    },
   ];
 
   const LS_VALVE_PREFIX = "wfm_es_idp:valve_status:";
@@ -1346,22 +1440,58 @@
   }
 
   function applyWfmClassTweaks() {
-    for (const tw of WFM_CLASS_TWEAKS) {
-      let el = null;
+    WFM_CLASS_TWEAKS.forEach((tw, ruleIndex) => {
+      const stamp = `ct${ruleIndex}`;
+      const matchAll = tw.matchAll === true;
+      const prefix = tw.onlyIfTextStartsWith;
+      const doRevert = tw.revertWhenUnmatched === true && typeof prefix === "string";
+      let list = [];
       try {
-        el = document.querySelector(tw.path);
+        list = matchAll ? Array.from(document.querySelectorAll(tw.path)) : [];
+        if (!matchAll) {
+          const el = document.querySelector(tw.path);
+          if (el) list = [el];
+        }
       } catch (err) {
         if (DEBUG_SCRIPT_ACTIONS) console.warn("[WFM ES IDP] class tweak invalid selector:", tw.path, err);
-        continue;
+        return;
       }
-      if (!(el instanceof HTMLElement)) continue;
-      for (const c of tw.removeClasses || []) {
-        if (c) el.classList.remove(c);
+
+      const removeList = tw.removeClasses || [];
+      const addList = tw.addClasses || [];
+
+      function applyForward(el) {
+        for (const c of removeList) {
+          if (c) el.classList.remove(c);
+        }
+        for (const c of addList) {
+          if (c) el.classList.add(c);
+        }
       }
-      for (const c of tw.addClasses || []) {
-        if (c) el.classList.add(c);
+
+      function applyRevert(el) {
+        for (const c of addList) {
+          if (c) el.classList.remove(c);
+        }
+        for (const c of removeList) {
+          if (c) el.classList.add(c);
+        }
       }
-    }
+
+      for (const el of list) {
+        if (!(el instanceof HTMLElement)) continue;
+        const textOk = typeof prefix === "string" ? el.textContent.trim().startsWith(prefix) : true;
+        if (typeof prefix === "string" && !textOk) {
+          if (doRevert && el.dataset.wfmCt === stamp) {
+            applyRevert(el);
+            delete el.dataset.wfmCt;
+          }
+          continue;
+        }
+        applyForward(el);
+        if (doRevert) el.dataset.wfmCt = stamp;
+      }
+    });
   }
 
   function runStep8() {
