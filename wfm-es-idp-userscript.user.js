@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         WFM ES IDP helpers
 // @namespace    https://github.com/sabirimanov/wfm-es-idp-userscript
-// @version      0.3.1
+// @version      0.4.0
 // @description  Automate pre-install modal serial capture, checklist steps 0–6 and 8, HES polling
 // @author       you
 // @homepageURL  https://github.com/sabirimanov/wfm-es-idp-userscript
@@ -20,10 +20,22 @@
   const ICCID_LEN = 20;
   const HES_POLL_MS = 30_000;
   const HES_FIRST_CHECK_MS = 1000;
-  /** Pause between scripted UI actions and checklist substeps (ms) */
-  const ACTION_DELAY_MS = 500;
+  /** Pause between scripted UI actions within a step (ms) */
+  const ACTION_DELAY_MS = 550;
+  /** Wait after a checklist step becomes visible before first automation (ms) */
+  const STEP_SETTLE_MS = 900;
+  /** Extra wait after last radio/select before clicking #nextStepBtn (ms) */
+  const NEXT_AFTER_FORM_MS = 550;
+  /** After Edit on mapping row, wait before clearing .mapping-input (ms) */
+  const MAPPING_EDIT_TO_CLEAR_MS = 800;
+  /** Min time after clear before Validate may run (ms) */
+  const MAPPING_MIN_MS_AFTER_CLEAR = 550;
+  /** Idle debounce on .mapping-input before scheduling Validate (ms) */
+  const MAPPING_ICCID_IDLE_MS = 500;
   /** After last keystroke from HID scanner, wait this long then normalize #deviceId */
   const DEVICE_ID_SCAN_IDLE_MS = 300;
+  /** Swal “Checklist saved successfully” → wait then reload (ms) */
+  const CHECKLIST_SAVED_RELOAD_MS = 1000;
 
   /** @param {Element | null | undefined} el */
   function isVisible(el) {
@@ -192,18 +204,26 @@
     }, delayMs);
   }
 
-  /** @param {string} stepId @param {number} baseDelayMs @param {(() => void)[]} actions */
-  function runStepAutofillChain(stepId, baseDelayMs, actions) {
+  /**
+   * Run actions with delays: settle before first action, gaps between middle actions,
+   * extra gap before the last action (usually #nextStepBtn) so the app can validate inputs.
+   * @param {string} stepId
+   * @param {(() => void)[]} actions
+   */
+  function runStepAutofillChain(stepId, actions) {
     const step = stepEl(stepId);
     if (!step || !isVisible(step)) return;
     if (step.dataset.wfmAutofillDone === "1") return;
     if (step.dataset.wfmAutofillPending === "1") return;
     step.dataset.wfmAutofillPending = "1";
     const token = state.stepAutofillTokens[stepId] ?? 0;
-    let t = baseDelayMs;
+    let t = STEP_SETTLE_MS;
     for (let i = 0; i < actions.length; i++) {
       const act = actions[i];
       const isLast = i === actions.length - 1;
+      if (isLast) {
+        t += NEXT_AFTER_FORM_MS;
+      }
       scheduleStepAction(stepId, token, t, () => {
         act();
         if (isLast) {
@@ -211,7 +231,9 @@
           delete step.dataset.wfmAutofillPending;
         }
       });
-      t += ACTION_DELAY_MS;
+      if (!isLast) {
+        t += ACTION_DELAY_MS;
+      }
     }
   }
 
@@ -298,12 +320,13 @@
     preModalWasHidden: true,
     deviceIdListenersInstalled: false,
     mappingInputListenersInstalled: false,
-    s2: /** @type {{ phase: string; editClicked: boolean; editClickScheduled: boolean; mappingCleared: boolean; mappingClearScheduled: boolean; mappingUserInteractedTrusted: boolean; validateClicked: boolean; validateScheduled: boolean; radiosApplied: boolean }} */ ({
+    s2: /** @type {{ phase: string; editClicked: boolean; editClickScheduled: boolean; mappingCleared: boolean; mappingClearScheduled: boolean; mappingClearedAt: number; mappingUserInteractedTrusted: boolean; validateClicked: boolean; validateScheduled: boolean; radiosApplied: boolean }} */ ({
       phase: "idle",
       editClicked: false,
       editClickScheduled: false,
       mappingCleared: false,
       mappingClearScheduled: false,
+      mappingClearedAt: 0,
       mappingUserInteractedTrusted: false,
       validateClicked: false,
       validateScheduled: false,
@@ -314,14 +337,19 @@
       pollTickId: ReturnType<typeof setInterval> | null;
       hesResolved: boolean;
       pullDefaultText: string;
+      pullAttempted: boolean;
     }} */ ({
       phase: "idle",
       pollTickId: null,
       hesResolved: false,
       pullDefaultText: "",
+      pullAttempted: false,
     }),
     swalObserver: /** @type {MutationObserver | null} */ (null),
+    checklistSavedObserver: /** @type {MutationObserver | null} */ (null),
+    checklistSavedReloadScheduled: false,
     deviceIdDebounceTimer: 0,
+    mappingValidateDebounceTimer: 0,
   };
 
   function clearS3Timers() {
@@ -329,6 +357,44 @@
       clearInterval(state.s3.pollTickId);
       state.s3.pollTickId = null;
     }
+  }
+
+  function swalChecklistSavedVisible() {
+    const el = document.getElementById("swal2-html-container");
+    if (!el) return false;
+    const text = (el.textContent || "").trim();
+    const d = el.style.display;
+    const visible = d === "block" || getComputedStyle(el).display === "block";
+    return visible && text === "Checklist saved successfully";
+  }
+
+  function maybeScheduleChecklistSavedReload() {
+    if (state.checklistSavedReloadScheduled) return;
+    if (!swalChecklistSavedVisible()) return;
+    state.checklistSavedReloadScheduled = true;
+    window.setTimeout(() => {
+      window.location.reload();
+    }, CHECKLIST_SAVED_RELOAD_MS);
+  }
+
+  function attachChecklistSavedObserver() {
+    if (state.checklistSavedObserver) return;
+    state.checklistSavedObserver = new MutationObserver(() => maybeScheduleChecklistSavedReload());
+    state.checklistSavedObserver.observe(document.documentElement, {
+      childList: true,
+      subtree: true,
+      attributes: true,
+      characterData: true,
+      attributeFilter: ["style", "class"],
+    });
+    maybeScheduleChecklistSavedReload();
+  }
+
+  /** Step 3 HES / yes-branch not finished — block step 4+ until #nextStepBtn advanced this visit */
+  function step3BlocksFollowupSteps() {
+    const s3 = stepEl("3");
+    if (!s3 || !isVisible(s3)) return false;
+    return state.s3.phase !== "completed";
   }
 
   function restoreHesButtonLabel() {
@@ -400,8 +466,22 @@
       state.s2.mappingUserInteractedTrusted = true;
     }
     if (!state.s2.mappingUserInteractedTrusted) return;
-    if (input.value.trim().length < ICCID_LEN) return;
-    scheduleStep2Validate();
+    if (state.mappingValidateDebounceTimer) {
+      window.clearTimeout(state.mappingValidateDebounceTimer);
+      state.mappingValidateDebounceTimer = 0;
+    }
+    state.mappingValidateDebounceTimer = window.setTimeout(() => {
+      state.mappingValidateDebounceTimer = 0;
+      const st2 = stepEl("2");
+      const mi = st2 && st2.querySelector("input.mapping-input");
+      if (!(mi instanceof HTMLInputElement)) return;
+      if (state.s2.phase !== "mapping" || !state.s2.mappingCleared) return;
+      if (state.s2.validateClicked || state.s2.validateScheduled) return;
+      if (Date.now() - state.s2.mappingClearedAt < MAPPING_MIN_MS_AFTER_CLEAR) return;
+      if (mi.value.trim().length < ICCID_LEN) return;
+      if (!state.s2.mappingUserInteractedTrusted) return;
+      scheduleStep2Validate();
+    }, MAPPING_ICCID_IDLE_MS);
   }
 
   function installMappingInputListeners() {
@@ -423,11 +503,22 @@
         return;
       }
       if (state.s2.validateClicked) return;
+      const mi = st.querySelector("input.mapping-input");
+      if (!(mi instanceof HTMLInputElement) || mi.value.trim().length < ICCID_LEN) {
+        state.s2.validateScheduled = false;
+        state.s2.phase = "mapping";
+        return;
+      }
+      if (Date.now() - state.s2.mappingClearedAt < MAPPING_MIN_MS_AFTER_CLEAR) {
+        state.s2.validateScheduled = false;
+        state.s2.phase = "mapping";
+        return;
+      }
       const valBtn = findValidateBtn(st);
       if (valBtn) clickEl(valBtn);
       state.s2.validateClicked = true;
       attachSwalObserver();
-    }, ACTION_DELAY_MS);
+    }, NEXT_AFTER_FORM_MS);
   }
 
   function ensurePreModalFocus() {
@@ -460,7 +551,7 @@
     /* Leave data-wfm-s0-next-done on #nextStepBtn when navigating back so we do not auto-click Next again. */
     updateStepVisibility("0", visible);
     if (!visible) return;
-    runStepAutofillChain("0", ACTION_DELAY_MS, [
+    runStepAutofillChain("0", [
       () => setRadio("Sm IMEI Verified", "Yes"),
       () => setRadio("Sm Metrology Verified", "Yes"),
       () => {
@@ -478,7 +569,7 @@
     const visible = !!(step && isVisible(step));
     updateStepVisibility("1", visible);
     if (!visible) return;
-    runStepAutofillChain("1", ACTION_DELAY_MS, [
+    runStepAutofillChain("1", [
       () => setRadio("Sm Serial Verified", "Match"),
       // () => setRadio("Sm Body Condition", "Not Damaged"),
       () => setSelect("Sm Display Function", "OK"),
@@ -503,6 +594,7 @@
         editClickScheduled: false,
         mappingCleared: false,
         mappingClearScheduled: false,
+        mappingClearedAt: 0,
         mappingUserInteractedTrusted: false,
         validateClicked: false,
         validateScheduled: false,
@@ -511,6 +603,10 @@
       if (state.swalObserver) {
         state.swalObserver.disconnect();
         state.swalObserver = null;
+      }
+      if (state.mappingValidateDebounceTimer) {
+        window.clearTimeout(state.mappingValidateDebounceTimer);
+        state.mappingValidateDebounceTimer = 0;
       }
     }
     state.stepLastVisible["2"] = visible;
@@ -554,9 +650,10 @@
           if (!(mi instanceof HTMLInputElement)) return;
           setInputValueAndNotify(mi, "");
           state.s2.mappingCleared = true;
+          state.s2.mappingClearedAt = Date.now();
           state.s2.mappingUserInteractedTrusted = false;
           mi.focus();
-        }, ACTION_DELAY_MS);
+        }, MAPPING_EDIT_TO_CLEAR_MS);
       }
     }
   }
@@ -627,7 +724,7 @@
           const next = nextStepBtn();
           if (next) clickEl(next);
           state.s2.phase = "done";
-        }, ACTION_DELAY_MS);
+        }, NEXT_AFTER_FORM_MS);
         return;
       }
       clickSwalConfirmRobust();
@@ -639,7 +736,7 @@
           const next = nextStepBtn();
           if (next) clickEl(next);
           state.s2.phase = "done";
-        }, ACTION_DELAY_MS);
+        }, NEXT_AFTER_FORM_MS);
       }
     };
     step();
@@ -655,7 +752,7 @@
         state.swalObserver.disconnect();
         state.swalObserver = null;
       }
-      window.setTimeout(() => dismissSimActiveSwalThenNext(), ACTION_DELAY_MS);
+      window.setTimeout(() => dismissSimActiveSwalThenNext(), NEXT_AFTER_FORM_MS);
     });
     state.swalObserver.observe(document.documentElement, {
       childList: true,
@@ -669,7 +766,7 @@
         state.swalObserver.disconnect();
         state.swalObserver = null;
       }
-      window.setTimeout(() => dismissSimActiveSwalThenNext(), ACTION_DELAY_MS);
+      window.setTimeout(() => dismissSimActiveSwalThenNext(), NEXT_AFTER_FORM_MS);
     }
   }
 
@@ -716,16 +813,20 @@
         pollTickId: null,
         hesResolved: false,
         pullDefaultText: "",
+        pullAttempted: false,
       };
     }
     state.stepLastVisible["3"] = visible;
     if (!visible) return;
+    if (state.s3.phase === "completed") return;
 
     const grid = hesGrid();
     const pull = hesBtn();
     if (!pull || !grid) return;
 
     if (state.s3.phase === "idle") {
+      if (state.s3.pullAttempted) return;
+      state.s3.pullAttempted = true;
       const rawLabel = (pull.textContent || "").trim();
       state.s3.pullDefaultText =
         rawLabel.replace(/\s*\(\d+\)\s*$/, "").trim() || "Pull HES Data";
@@ -749,7 +850,10 @@
         }
         state.s3.phase = "wait_label";
         setTimeout(() => {
-          if (state.s3.phase === "wait_label") state.s3.phase = "idle";
+          if (state.s3.phase === "wait_label") {
+            state.s3.phase = "idle";
+            state.s3.pullAttempted = false;
+          }
         }, 2000);
       }, HES_FIRST_CHECK_MS);
       return;
@@ -778,7 +882,7 @@
 
     step.dataset.wfmS3YesChainPending = "1";
     const token = state.stepAutofillTokens["3"] ?? 0;
-    let t = ACTION_DELAY_MS;
+    let t = STEP_SETTLE_MS;
 
     scheduleStepAction("3", token, t, () => setRadio("Sm Comm Registered", "Yes"));
     t += ACTION_DELAY_MS;
@@ -814,7 +918,7 @@
         }
       }
     });
-    t += ACTION_DELAY_MS;
+    t += ACTION_DELAY_MS + NEXT_AFTER_FORM_MS;
 
     scheduleStepAction("3", token, t, () => {
       const n = nextStepBtn();
@@ -822,6 +926,7 @@
         n.dataset.wfmS3NextDone = "1";
         clickEl(n);
       }
+      state.s3.phase = "completed";
       delete step.dataset.wfmS3YesChainPending;
       step.dataset.wfmS3YesChainDone = "1";
     });
@@ -832,7 +937,7 @@
     const visible = !!(step && isVisible(step));
     updateStepVisibility("4", visible);
     if (!visible) return;
-    runStepAutofillChain("4", ACTION_DELAY_MS, [
+    runStepAutofillChain("4", [
       () => {
         const meterId = (deviceIdInput() && deviceIdInput().value) || "";
         let valve = "Closed";
@@ -858,7 +963,7 @@
     const visible = !!(step && isVisible(step));
     updateStepVisibility("5", visible);
     if (!visible) return;
-    runStepAutofillChain("5", ACTION_DELAY_MS, [
+    runStepAutofillChain("5", [
       () => setRadio("Sm Battery Status", "OK"),
       () => {
         const n = nextStepBtn();
@@ -875,7 +980,7 @@
     const visible = !!(step && isVisible(step));
     updateStepVisibility("6", visible);
     if (!visible) return;
-    runStepAutofillChain("6", ACTION_DELAY_MS, [
+    runStepAutofillChain("6", [
       () => setRadio("Sm IP Configured", "Yes"),
       () => setRadio("Sm Port Configured", "Yes"),
       () => setRadio("Sm Schedule Set", "Yes"),
@@ -900,7 +1005,7 @@
     const fileInp = document.querySelector('input[type="file"][name="Sm Image1"]');
     if (!(fileInp instanceof HTMLInputElement)) return;
     if (fileInp.hasAttribute("required")) return;
-    runStepAutofillChain("8", ACTION_DELAY_MS, [
+    runStepAutofillChain("8", [
       () => {
         const preview = document.getElementById("previewChecklistBtn");
         if (preview && !preview.dataset.wfmPreviewClicked) {
@@ -919,13 +1024,14 @@
     const step3 = stepEl("3");
     const hesBlocking = step3 && isVisible(step3) && state.s3.phase === "polling" && !state.s3.hesResolved;
     const s2Blocking = step2PipelineBlocking();
+    const s3Blocking = step3BlocksFollowupSteps();
 
     runStep2();
     if (!s2Blocking) {
       runStep3();
     }
 
-    if (!hesBlocking && !s2Blocking) {
+    if (!hesBlocking && !s2Blocking && !s3Blocking) {
       runStep4();
       runStep5();
       runStep6();
@@ -944,6 +1050,7 @@
 
   installDeviceIdListeners();
   installMappingInputListeners();
+  attachChecklistSavedObserver();
   tick();
   const obs = new MutationObserver(() => scheduleTick());
   obs.observe(document.documentElement, { childList: true, subtree: true, attributes: true });
