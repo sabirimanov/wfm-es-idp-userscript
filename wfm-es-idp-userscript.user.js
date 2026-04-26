@@ -1,12 +1,12 @@
 // ==UserScript==
 // @name         WFM ES IDP helpers
-// @namespace    https://github.com/your-github-user/your-repo
+// @namespace    https://github.com/sabirimanov/wfm-es-idp-userscript
 // @version      0.1.0
 // @description  Replace labels and automate simple form actions on matched pages
 // @author       you
-// @homepageURL  https://github.com/your-github-user/your-repo
-// @updateURL    https://raw.githubusercontent.com/your-github-user/your-repo/main/wfm-es-idp-userscript/wfm-es-idp-userscript.user.js
-// @downloadURL  https://raw.githubusercontent.com/your-github-user/your-repo/main/wfm-es-idp-userscript/wfm-es-idp-userscript.user.js
+// @homepageURL  https://github.com/sabirimanov/wfm-es-idp-userscript
+// @updateURL    https://raw.githubusercontent.com/sabirimanov/wfm-es-idp-userscript/master/wfm-es-idp-userscript.user.js
+// @downloadURL  https://raw.githubusercontent.com/sabirimanov/wfm-es-idp-userscript/master/wfm-es-idp-userscript.user.js
 // @match        https://example.com/*
 // @run-at       document-idle
 // @grant        none
