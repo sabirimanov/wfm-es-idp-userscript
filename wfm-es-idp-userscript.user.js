@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         WFM ES IDP helpers
 // @namespace    https://github.com/sabirimanov/wfm-es-idp-userscript
-// @version      0.5.4
+// @version      0.5.6
 // @description  Automate pre-install modal serial capture, checklist steps 0–6 and 8, HES polling
 // @author       you
 // @homepageURL  https://github.com/sabirimanov/wfm-es-idp-userscript
@@ -19,6 +19,36 @@
   const DEBUG_SCRIPT_ACTIONS = true;
   /** Log every #nextStepBtn click (capture phase): user vs userscript vs other synthetic */
   const LOG_NEXT_STEP_BTN_CLICKS = true;
+
+  /**
+   * Checklist / modal UI language for **labels and display text only**.
+   * Must match a key in `WFM_TRANSLATION_RULES`. Does not change input/select values or fire events.
+   */
+  /** Set to `"en"` to keep original English UI; `"az"` for Azerbaijani pre-install strings below. */
+  const WFM_UI_LOCALE = "az";
+
+  /**
+   * Per-locale label rules. Only nodes matched by `path` are updated.
+   * - Default: set `textContent` = `text` (use for real &lt;label&gt;, headings, spans — not for inputs’ `.value`).
+   * - If `attribute` is set: `setAttribute(attribute, text)` only (e.g. `data-label` when the app reads title from there).
+   * Prefer selectors scoped to a step, e.g. `.checklist-step[data-step="1"] …`, to avoid touching the wrong node.
+   *
+   * @typedef {{ path: string; text: string; attribute?: string }} WfmTranslationRule
+   * @type {Record<string, WfmTranslationRule[]>}
+   */
+  const WFM_TRANSLATION_RULES = {
+    en: [],
+    az: [
+      { path: "#addNewPreCheckListBtn", text: "Yeni Sayğac Yoxlama" },
+      { path: "label:has(+ select#statusTypeDropdown)", text: "Cihaz növü" },
+      { path: '#statusTypeDropdown option[value="new"]', text: "Yeni" },
+      { path: '#statusTypeDropdown option[value="old"]', text: "Köhnə" },
+      { path: 'label[for="deviceId"]', text: "Seriya nömrəsi (QR kod)" },
+      { path: "label:has(#deviceId)", text: "Seriya nömrəsi (QR kod)" },
+      { path: "label:has(+ input#deviceId)", text: "Seriya nömrəsi (QR kod)" },
+      { path: "#validateBtnId", text: "Yoxlamaq" },
+    ],
+  };
 
   const LS_VALVE_PREFIX = "wfm_es_idp:valve_status:";
   const SERIAL_MAX_LEN = 16;
@@ -1194,6 +1224,34 @@
     ]);
   }
 
+  /** Apply `WFM_TRANSLATION_RULES[WFM_UI_LOCALE]`: labels / display attributes only. */
+  function applyWfmTranslations() {
+    const rules = WFM_TRANSLATION_RULES[WFM_UI_LOCALE];
+    if (!rules || rules.length === 0) return;
+    for (const rule of rules) {
+      const p = rule.path;
+      const t = rule.text;
+      if (!p || typeof t !== "string") continue;
+      let el = null;
+      try {
+        el = document.querySelector(p);
+      } catch (err) {
+        if (DEBUG_SCRIPT_ACTIONS) console.warn("[WFM ES IDP] i18n invalid selector:", p, err);
+        continue;
+      }
+      if (!(el instanceof Element)) continue;
+      const attr = rule.attribute;
+      if (attr) {
+        if (!(el instanceof HTMLElement)) continue;
+        if (el.getAttribute(attr) === t) continue;
+        el.setAttribute(attr, t);
+      } else {
+        if (el.textContent === t) continue;
+        el.textContent = t;
+      }
+    }
+  }
+
   function runStep8() {
     const step = stepEl("8");
     const visible = !!(step && isVisible(step));
@@ -1237,6 +1295,8 @@
       runStep6();
       runStep8();
     }
+
+    applyWfmTranslations();
   }
 
   let debounceTimer = 0;
