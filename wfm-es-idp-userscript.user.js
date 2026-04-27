@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         WFM ES IDP helpers
 // @namespace    https://github.com/sabirimanov/wfm-es-idp-userscript
-// @version      0.5.11
+// @version      0.5.12
 // @description  Automate pre-install modal serial capture, checklist steps 0–6 and 8, HES polling
 // @author       you
 // @homepageURL  https://github.com/sabirimanov/wfm-es-idp-userscript
@@ -942,7 +942,7 @@
       const valBtn = findValidateBtn(st);
       if (!isValidateMappingButton(valBtn)) {
         state.s2.validateBtnWaitCount += 1;
-        if (state.s2.validateBtnWaitCount <= 24) {
+        if (state.s2.validateBtnWaitCount <= 60) {
           window.setTimeout(attemptValidate, 100);
           return;
         }
@@ -1110,13 +1110,30 @@
     return !!(step && isVisible(step) && state.s2.phase !== "done");
   }
 
+  /** Collapse whitespace for reliable substring checks on Swal DOM trees. */
+  function normalizeAlertText(s) {
+    return (s || "").replace(/\s+/g, " ").trim().toLowerCase();
+  }
+
+  /**
+   * True when a visible SweetAlert2 dialog shows the SIM-active message.
+   * The text may live in `#swal2-title`, `#swal2-html-container`, or other popup nodes — not only
+   * a block-display html container with exact string `SIM is active`.
+   */
   function swalActiveSim() {
-    const el = document.getElementById("swal2-html-container");
-    if (!el) return false;
-    const text = (el.textContent || "").trim();
-    const d = el.style.display;
-    const visible = d === "block" || getComputedStyle(el).display === "block";
-    return visible && text === "SIM is active";
+    const needle = "sim is active";
+    const roots = document.querySelectorAll(".swal2-container");
+    for (let i = 0; i < roots.length; i++) {
+      const root = roots[i];
+      if (!(root instanceof HTMLElement)) continue;
+      if (root.classList.contains("swal2-backdrop-hidden")) continue;
+      const rcs = getComputedStyle(root);
+      if (rcs.display === "none" || rcs.visibility === "hidden" || rcs.opacity === "0") continue;
+      const popup = root.querySelector(".swal2-popup");
+      const scope = popup instanceof HTMLElement ? popup : root;
+      if (normalizeAlertText(scope.textContent || "").includes(needle)) return true;
+    }
+    return false;
   }
 
   /** Visible SweetAlert2 confirm (Ok) — class list varies by build */
@@ -1192,32 +1209,44 @@
     step();
   }
 
+  /** One-shot: SIM swal detected → disconnect observer and run dismiss + Next flow. */
+  function beginSimActiveSwalDismissal(source) {
+    if (state.s2.sawSimActiveSwal) return;
+    state.s2.sawSimActiveSwal = true;
+    wfmLog(`step 2: SIM is active swal detected (${source})`);
+    if (state.swalObserver) {
+      state.swalObserver.disconnect();
+      state.swalObserver = null;
+    }
+    window.setTimeout(() => dismissSimActiveSwalThenNext(), NEXT_AFTER_FORM_MS);
+  }
+
+  /** If MutationObserver missed text-only updates, still pick up the dialog on the main tick. */
+  function tryDetectSimActiveSwalFromTick() {
+    if (state.s2.phase !== "swal_wait" || state.s2.sawSimActiveSwal) return;
+    if (!swalActiveSim()) return;
+    beginSimActiveSwalDismissal("tick");
+  }
+
   function attachSwalObserver() {
     if (state.swalObserver) return;
     let started = false;
-    const onSimSwalSeen = () => {
-      state.s2.sawSimActiveSwal = true;
-      wfmLog("step 2: swal visible with text “SIM is active”");
-      if (state.swalObserver) {
-        state.swalObserver.disconnect();
-        state.swalObserver = null;
-      }
-      window.setTimeout(() => dismissSimActiveSwalThenNext(), NEXT_AFTER_FORM_MS);
-    };
-    state.swalObserver = new MutationObserver(() => {
+    const onMut = () => {
       if (!swalActiveSim() || started) return;
       started = true;
-      onSimSwalSeen();
-    });
+      beginSimActiveSwalDismissal("mutation");
+    };
+    state.swalObserver = new MutationObserver(onMut);
     state.swalObserver.observe(document.documentElement, {
       childList: true,
       subtree: true,
       attributes: true,
-      attributeFilter: ["style", "class"],
+      characterData: true,
+      attributeFilter: ["style", "class", "aria-hidden"],
     });
     if (swalActiveSim()) {
       started = true;
-      onSimSwalSeen();
+      beginSimActiveSwalDismissal("initial");
     }
   }
 
@@ -1579,6 +1608,7 @@
     const s3Blocking = step3BlocksFollowupSteps();
 
     runStep2();
+    tryDetectSimActiveSwalFromTick();
     if (!s2Blocking) {
       runStep3();
     }
