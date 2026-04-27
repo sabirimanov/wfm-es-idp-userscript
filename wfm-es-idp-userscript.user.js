@@ -955,15 +955,13 @@
   function runStep0() {
     const step = stepEl("0");
     const visible = !!(step && isVisible(step));
-    /* Leave data-wfm-s0-next-done on #nextStepBtn when navigating back so we do not auto-click Next again. */
     updateStepVisibility("0", visible);
     if (!visible) return;
+    /* IMEI only; Sm Metrology Verified and #nextStepBtn are left to the operator. */
     runStepAutofillChain("0", [
       () => {
         setRadio("Sm IMEI Verified", "Yes");
-        setRadio("Sm Metrology Verified", "Yes");
       },
-      () => clickNextIfStepActive("0", "wfmS0NextDone", 0),
     ]);
   }
 
