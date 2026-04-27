@@ -1409,7 +1409,7 @@
         } catch (_) {
           /* ignore */
         }
-        setSelect("Sm Valve Status", valve === "Open" ? "Open" : "Closed");
+        //setSelect("Sm Valve Status", valve === "Open" ? "Open" : "Closed");
       },
       () => clickNextIfStepActive("4", "wfmS4NextDone", 0),
     ]);
