@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         WFM ES IDP helpers
 // @namespace    https://github.com/sabirimanov/wfm-es-idp-userscript
-// @version      0.5.9
+// @version      0.5.10
 // @description  Automate pre-install modal serial capture, checklist steps 0–6 and 8, HES polling
 // @author       you
 // @homepageURL  https://github.com/sabirimanov/wfm-es-idp-userscript
@@ -78,7 +78,7 @@
 
       { path: '.checklist-step[data-step="0"] > div > div > h4', text: "Addım 1 / 9  ", textNodeOnly: true, textNodeIndex: 0 },
       { path: '.checklist-step[data-step="0"] > div:nth-child(2) > div:nth-child(1) > label:nth-child(1)', text: "Smart Sayğacın IMEI qeydiyyatı təsdiqlənib", textNodeOnly: true, textNodeIndex: 0 },
-      { path: '.checklist-step[data-step="0"] > div:nth-child(2) > div:nth-child(2) > label:nth-child(1)', text: "Metrologiya rəsmiləşdirilməsi təsdiqlənib", textNodeOnly: true, textNodeIndex: 0 },
+      { path: '.checklist-step[data-step="0"] > div:nth-child(2) > div:nth-child(2) > label:nth-child(1)', text: "Metrologiya plombu yapışdırılıb", textNodeOnly: true, textNodeIndex: 0 },
       { path: '.checklist-step[data-step="0"] > div:nth-child(2) > div:nth-child(1) > div > label:nth-of-type(1) > span', text: "Bəli" },
       { path: '.checklist-step[data-step="0"] > div:nth-child(2) > div:nth-child(1) > div > label:nth-of-type(2) > span', text: "Xeyr" },
       { path: '.checklist-step[data-step="0"] > div:nth-child(2) > div:nth-child(2) > div > label:nth-of-type(1) > span', text: "Bəli" },
@@ -260,6 +260,26 @@
     el.dispatchEvent(new Event("input", { bubbles: true }));
     el.dispatchEvent(new Event("change", { bubbles: true }));
     wfmLog(`set radio "${name}" → ${value}`);
+  }
+
+  /**
+   * Uncheck every radio with `name` under `root` (dispatches input/change like setRadio).
+   * @param {ParentNode} root
+   * @param {string} name
+   */
+  function clearRadiosByName(root, name) {
+    const nodes = root.querySelectorAll(`input[type="radio"][name="${cssAttr(name)}"]`);
+    let cleared = false;
+    for (let i = 0; i < nodes.length; i++) {
+      const el = nodes[i];
+      if (el instanceof HTMLInputElement && el.checked) {
+        el.checked = false;
+        cleared = true;
+        el.dispatchEvent(new Event("input", { bubbles: true }));
+        el.dispatchEvent(new Event("change", { bubbles: true }));
+      }
+    }
+    if (cleared) wfmLog(`clear radios "${name}"`);
   }
 
   /**
@@ -658,11 +678,11 @@
     setRadio("Sm Comm Registered", "Yes");
     if (gridCellSpanText(g, 5) !== "Not Available") {
       setRadio("Sm Reads Received", "Yes");
-      setRadio("Sm Reads Verified", "Match");
+      //setRadio("Sm Reads Verified", "Match");
     }
     const seventh = gridCellSpanText(g, 6);
     const meterId = (deviceIdInput() && deviceIdInput().value) || "";
-    if (seventh === "Open" && meterId) {
+    if (String(seventh).trim().toLowerCase() === "open" && meterId) {
       try {
         localStorage.setItem(LS_VALVE_PREFIX + meterId, "Open");
       } catch (_) {
@@ -957,10 +977,12 @@
     const visible = !!(step && isVisible(step));
     updateStepVisibility("0", visible);
     if (!visible) return;
-    /* IMEI only; Sm Metrology Verified and #nextStepBtn are left to the operator. */
+    /* IMEI only; clear metrology radios; #nextStepBtn left to the operator. */
     runStepAutofillChain("0", [
       () => {
         setRadio("Sm IMEI Verified", "Yes");
+        const st = stepEl("0");
+        if (st) clearRadiosByName(st, "Sm Metrology Verified");
       },
     ]);
   }
@@ -1514,7 +1536,27 @@
     ]);
   }
 
+  /**
+   * Page inline `formatValue` maps `0` → "Not Available"; when it is assigned on `window`,
+   * replace it with the same logic minus that branch so numeric zero displays as 0.
+   */
+  function tryPatchPageFormatValue() {
+    const w = window;
+    if (typeof w.formatValue !== "function") return;
+    const prev = w.formatValue;
+    if (prev.__wfmFormatValueNoZeroNa) return;
+    w.formatValue = function (key, value) {
+      if (value === null || value === undefined) return "Not Available";
+      if (typeof value === "boolean") return value ? "Yes" : "No";
+      if (String(key).toLowerCase().includes("rtc")) return new Date(value).toLocaleString();
+      return value;
+    };
+    w.formatValue.__wfmFormatValueNoZeroNa = true;
+    wfmLog('patched window.formatValue (0 no longer → "Not Available")');
+  }
+
   function tick() {
+    tryPatchPageFormatValue();
     ensurePreModalFocus();
     runStep0();
     runStep1();
