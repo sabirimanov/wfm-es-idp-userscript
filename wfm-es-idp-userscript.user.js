@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         WFM ES IDP helpers
 // @namespace    https://github.com/sabirimanov/wfm-es-idp-userscript
-// @version      0.5.10
+// @version      0.5.11
 // @description  Automate pre-install modal serial capture, checklist steps 0–6 and 8, HES polling
 // @author       you
 // @homepageURL  https://github.com/sabirimanov/wfm-es-idp-userscript
@@ -424,8 +424,7 @@
     }
     /*
      * Do not dispatch a synthetic MouseEvent("click") here: HTMLElement.click() already
-     * fires one "click" in the DOM. Doing both double-invokes listeners (e.g. #nextStepBtn
-     * and Edit/Validate toggle on the same button → empty validate / double step advance).
+     * fires one "click" in the DOM. Doing both double-invokes listeners (e.g. #nextStepBtn).
      */
     if (typeof el.click === "function") {
       try {
@@ -654,8 +653,21 @@
     return null;
   }
 
-  /** @param {HTMLElement} step */
+  /** @param {HTMLElement} el */
+  function isValidateMappingButton(el) {
+    if (!(el instanceof HTMLElement)) return false;
+    if (el.classList.contains("validate-btn")) return true;
+    return ((el.textContent || "").trim() === "Validate");
+  }
+
+  /**
+   * Validate control for step-2 ICCID mapping: dedicated `validate-btn`, or legacy
+   * single-class `edit-btn` whose label is "Validate".
+   * @param {HTMLElement} step
+   */
   function findValidateBtn(step) {
+    const v = step.querySelector("button.validate-btn");
+    if (v instanceof HTMLElement) return v;
     const buttons = step.querySelectorAll("button.edit-btn");
     for (const b of buttons) {
       if (b.textContent && b.textContent.trim() === "Validate") return b;
@@ -928,13 +940,13 @@
         return;
       }
       const valBtn = findValidateBtn(st);
-      if (!(valBtn instanceof HTMLElement) || valBtn.textContent.trim() !== "Validate") {
+      if (!isValidateMappingButton(valBtn)) {
         state.s2.validateBtnWaitCount += 1;
         if (state.s2.validateBtnWaitCount <= 24) {
           window.setTimeout(attemptValidate, 100);
           return;
         }
-        wfmLog("step 2: Validate button label not ready — abort scheduled validate");
+        wfmLog("step 2: Validate button not ready — abort scheduled validate");
         state.s2.validateScheduled = false;
         state.s2.phase = "mapping";
         return;
