@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         WFM ES IDP helpers
 // @namespace    https://github.com/sabirimanov/wfm-es-idp-userscript
-// @version      0.6.1
+// @version      0.6.2
 // @description  Pre-install checklist automation; Meter Approval load-all-pages table merge
 // @author       you
 // @homepageURL  https://github.com/sabirimanov/wfm-es-idp-userscript
