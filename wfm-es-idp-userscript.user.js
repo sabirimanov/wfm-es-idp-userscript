@@ -1,13 +1,14 @@
 // ==UserScript==
 // @name         WFM ES IDP helpers
 // @namespace    https://github.com/sabirimanov/wfm-es-idp-userscript
-// @version      0.5.12
-// @description  Automate pre-install modal serial capture, checklist steps 0–6 and 8, HES polling
+// @version      0.6.0
+// @description  Pre-install checklist automation; Meter Approval load-all-pages table merge
 // @author       you
 // @homepageURL  https://github.com/sabirimanov/wfm-es-idp-userscript
 // @updateURL    https://raw.githubusercontent.com/sabirimanov/wfm-es-idp-userscript/master/wfm-es-idp-userscript.user.js
 // @downloadURL  https://raw.githubusercontent.com/sabirimanov/wfm-es-idp-userscript/master/wfm-es-idp-userscript.user.js
 // @match        https://wfm-idp.smartgasconnect.ai/Preinstallation/*
+// @match        https://wfm-idp.smartgasconnect.ai/Meter/Installation/Approval/Index*
 // @run-at       document-idle
 // @grant        none
 // ==/UserScript==
@@ -1633,15 +1634,262 @@
     }, 200);
   }
 
+  /** @returns {boolean} */
+  function isPreinstallPage() {
+    return /\/Preinstallation\//i.test(location.pathname);
+  }
+
+  /** @returns {boolean} */
+  function isMeterApprovalPage() {
+    return /\/Meter\/Installation\/Approval\/Index$/i.test(location.pathname);
+  }
+
+  const METER_APPROVAL_API =
+    "/Meter/Installation/Approval/Index?handler=MeterApprovalDetails";
+  const METER_APPROVAL_DEFAULT_PAGE_SIZE = 10;
+
+  /** ASP.NET antiforgery / xsrf header used by the approval grid AJAX handler. */
+  function getMeterApprovalXsrfToken() {
+    const inp = document.querySelector('input[name="__RequestVerificationToken"]');
+    if (inp instanceof HTMLInputElement && inp.value) return inp.value;
+    const meta = document.querySelector(
+      'meta[name="csrf-token"], meta[name="RequestVerificationToken"], meta[name="__RequestVerificationToken"]'
+    );
+    const content = meta?.getAttribute("content");
+    if (content) return content;
+    const dataEl = document.querySelector("[data-xsrf-token], [data-request-verification-token]");
+    if (dataEl instanceof HTMLElement) {
+      return (
+        dataEl.getAttribute("data-xsrf-token") ||
+        dataEl.getAttribute("data-request-verification-token") ||
+        ""
+      );
+    }
+    return "";
+  }
+
+  /** Build POST body from current filters (matches page AJAX). */
+  function buildMeterApprovalRequestBody(pageNo, lastPage) {
+    let dropDownValue = "";
+    const ddSel = document.querySelector(
+      '#DropDownValue, select[name="DropDownValue"], select[id*="DropDown" i], select[id*="Region" i]'
+    );
+    if (ddSel instanceof HTMLSelectElement && ddSel.value) {
+      dropDownValue = ddSel.value;
+    } else {
+      for (const sel of document.querySelectorAll("select")) {
+        if (/^[0-9a-f-]{36}$/i.test(sel.value)) {
+          dropDownValue = sel.value;
+          break;
+        }
+      }
+    }
+
+    let searchFilter = "";
+    const searchEl = document.querySelector(
+      '#SearchFilter, input[name="SearchFilter"], input[id*="Search" i][type="text"], input[id*="search" i]'
+    );
+    if (searchEl instanceof HTMLInputElement) searchFilter = searchEl.value.trim();
+
+    let source = "All";
+    const sourceEl = document.querySelector('#Source, select[name="Source"]');
+    if (sourceEl instanceof HTMLSelectElement && sourceEl.value) source = sourceEl.value;
+
+    const totalPagesEl = document.getElementById("MeterApprovalTotalPages");
+    const last =
+      typeof lastPage === "number" && lastPage > 0
+        ? lastPage
+        : parseInt(totalPagesEl?.value || "1", 10) || 1;
+
+    return {
+      PageNo: pageNo,
+      PageSize: METER_APPROVAL_DEFAULT_PAGE_SIZE,
+      SearchFilter: searchFilter,
+      DropDownValue: dropDownValue,
+      Source: source,
+      LastPage: last,
+    };
+  }
+
+  /**
+   * @param {number} pageNo
+   * @param {ReturnType<typeof buildMeterApprovalRequestBody>} body
+   */
+  async function fetchMeterApprovalPage(pageNo, body) {
+    const xsrf = getMeterApprovalXsrfToken();
+    const headers = {
+      accept: "*/*",
+      "content-type": "application/json; charset=UTF-8",
+      "x-requested-with": "XMLHttpRequest",
+    };
+    if (xsrf) headers["xsrf-token"] = xsrf;
+
+    const res = await fetch(METER_APPROVAL_API, {
+      method: "POST",
+      headers,
+      credentials: "include",
+      body: JSON.stringify({ ...body, PageNo: pageNo }),
+    });
+    if (!res.ok) {
+      throw new Error(`Meter approval page ${pageNo}: HTTP ${res.status}`);
+    }
+    const data = await res.json();
+    if (!data || typeof data.html !== "string") {
+      throw new Error(`Meter approval page ${pageNo}: invalid response`);
+    }
+    return data;
+  }
+
+  /** @param {string} html */
+  function extractApprovalTableRows(html) {
+    const doc = new DOMParser().parseFromString(html, "text/html");
+    const tbody =
+      doc.querySelector("#meter-approval-data-table-container tbody") ||
+      doc.querySelector("table tbody");
+    if (!tbody) return [];
+    return Array.from(tbody.querySelectorAll("tr"));
+  }
+
+  /** @param {HTMLTableRowElement[]} rows */
+  function renderMergedApprovalRows(rows) {
+    const container = document.getElementById("meter-approval-data-table-container");
+    const tbody = container?.querySelector("tbody");
+    if (!tbody) throw new Error("meter-approval table tbody not found");
+
+    const seen = new Set();
+    const frag = document.createDocumentFragment();
+    for (let i = 0; i < rows.length; i++) {
+      const row = rows[i];
+      const link = row.querySelector("a.open-meter-approval-details-modal[data-id]");
+      const id = link?.getAttribute("data-id");
+      if (id) {
+        if (seen.has(id)) continue;
+        seen.add(id);
+      }
+      frag.appendChild(document.importNode(row, true));
+    }
+    tbody.replaceChildren(frag);
+    return seen.size || rows.length;
+  }
+
+  /** @param {HTMLElement | null} statusEl @param {string} text */
+  function setMeterApprovalStatus(statusEl, text) {
+    if (statusEl) statusEl.textContent = text;
+  }
+
+  async function loadAllMeterApprovalPages() {
+    const btn = document.getElementById("wfmLoadAllMeterApprovalBtn");
+    const statusEl = document.getElementById("wfmLoadAllMeterApprovalStatus");
+    if (!(btn instanceof HTMLButtonElement) || btn.disabled) return;
+
+    btn.disabled = true;
+    const prevLabel = btn.textContent;
+    btn.textContent = "Loading…";
+    setMeterApprovalStatus(statusEl, "");
+
+    try {
+      let lastPage =
+        parseInt(document.getElementById("MeterApprovalTotalPages")?.value || "1", 10) || 1;
+      const baseBody = buildMeterApprovalRequestBody(1, lastPage);
+
+      const first = await fetchMeterApprovalPage(1, baseBody);
+      if (typeof first.totalPages === "number" && first.totalPages > 0) {
+        lastPage = first.totalPages;
+      }
+      baseBody.LastPage = lastPage;
+
+      /** @type {HTMLTableRowElement[]} */
+      const allRows = extractApprovalTableRows(first.html);
+      setMeterApprovalStatus(statusEl, `Page 1 / ${lastPage}…`);
+
+      for (let page = 2; page <= lastPage; page++) {
+        setMeterApprovalStatus(statusEl, `Page ${page} / ${lastPage}…`);
+        const data = await fetchMeterApprovalPage(page, baseBody);
+        allRows.push(...extractApprovalTableRows(data.html));
+      }
+
+      const rowCount = renderMergedApprovalRows(allRows);
+      const cur = document.getElementById("MeterApprovalCurrentPage");
+      const tot = document.getElementById("MeterApprovalTotalPages");
+      if (cur instanceof HTMLInputElement) cur.value = "1";
+      if (tot instanceof HTMLInputElement) tot.value = "1";
+
+      const pag = document.getElementById("MeterApprovalPagination");
+      if (pag) {
+        pag.replaceChildren();
+        const note = document.createElement("span");
+        note.className = "px-3 py-1 text-sm text-gray-600";
+        note.textContent = `All ${lastPage} pages loaded (${rowCount} rows)`;
+        pag.appendChild(note);
+      }
+
+      setMeterApprovalStatus(statusEl, `Done — ${rowCount} rows from ${lastPage} pages`);
+      wfmLog(`meter approval: merged ${rowCount} rows from ${lastPage} pages`);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      setMeterApprovalStatus(statusEl, `Error: ${msg}`);
+      wfmLog(`meter approval load-all failed: ${msg}`);
+      console.error("[WFM ES IDP] meter approval load-all:", err);
+    } finally {
+      btn.disabled = false;
+      btn.textContent = prevLabel || "Load all pages";
+    }
+  }
+
+  function initMeterApprovalLoadAll() {
+    if (!isMeterApprovalPage()) return;
+    if (!document.getElementById("meter-approval-data-table-container")) return;
+    if (document.getElementById("wfmLoadAllMeterApprovalBtn")) return;
+
+    const pagination = document.getElementById("MeterApprovalPagination");
+    const toolbar = document.createElement("div");
+    toolbar.id = "wfmMeterApprovalToolbar";
+    toolbar.className = "mb-2 flex justify-center items-center gap-2 flex-wrap";
+
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.id = "wfmLoadAllMeterApprovalBtn";
+    btn.className =
+      "px-4 py-2 rounded-full bg-blue-600 text-white text-sm font-medium hover:bg-blue-700 disabled:opacity-60";
+    btn.textContent = "Load all pages";
+    btn.addEventListener("click", () => {
+      void loadAllMeterApprovalPages();
+    });
+
+    const status = document.createElement("span");
+    status.id = "wfmLoadAllMeterApprovalStatus";
+    status.className = "text-sm text-gray-600";
+
+    toolbar.appendChild(btn);
+    toolbar.appendChild(status);
+
+    if (pagination?.parentElement) {
+      pagination.parentElement.insertBefore(toolbar, pagination);
+    } else {
+      const container = document.getElementById("meter-approval-data-table-container");
+      container?.parentElement?.appendChild(toolbar);
+    }
+
+    wfmLog("meter approval: Load all pages button ready");
+  }
+
   if (DEBUG_SCRIPT_ACTIONS) {
     console.log("[WFM ES IDP] DEBUG_SCRIPT_ACTIONS = true — numbered action log enabled");
   }
 
-  installDeviceIdListeners();
-  installMappingInputListeners();
-  installNextStepBtnClickLogger();
-  attachChecklistSavedObserver();
-  tick();
-  const obs = new MutationObserver(() => scheduleTick());
-  obs.observe(document.documentElement, { childList: true, subtree: true, attributes: true });
+  if (isPreinstallPage()) {
+    installDeviceIdListeners();
+    installMappingInputListeners();
+    installNextStepBtnClickLogger();
+    attachChecklistSavedObserver();
+    tick();
+    const obs = new MutationObserver(() => scheduleTick());
+    obs.observe(document.documentElement, { childList: true, subtree: true, attributes: true });
+  }
+
+  if (isMeterApprovalPage()) {
+    initMeterApprovalLoadAll();
+    const approvalObs = new MutationObserver(() => initMeterApprovalLoadAll());
+    approvalObs.observe(document.documentElement, { childList: true, subtree: true });
+  }
 })();
