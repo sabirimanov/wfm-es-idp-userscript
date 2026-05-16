@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         WFM ES IDP helpers
 // @namespace    https://github.com/sabirimanov/wfm-es-idp-userscript
-// @version      0.6.6
+// @version      0.6.8
 // @description  Pre-install checklist automation; Meter Approval load-all-pages table merge
 // @author       you
 // @homepageURL  https://github.com/sabirimanov/wfm-es-idp-userscript
@@ -9,6 +9,8 @@
 // @downloadURL  https://raw.githubusercontent.com/sabirimanov/wfm-es-idp-userscript/master/wfm-es-idp-userscript.user.js
 // @match        https://wfm-idp.smartgasconnect.ai/Preinstallation/*
 // @match        https://wfm-idp.smartgasconnect.ai/Meter/Installation/Approval/Index*
+// @match        https://wfm.smartazerigas.az/Preinstallation/*
+// @match        https://wfm.smartazerigas.az/Meter/Installation/Approval/Index*
 // @run-at       document-idle
 // @grant        none
 // ==/UserScript==
@@ -1647,6 +1649,8 @@
   const METER_APPROVAL_API =
     "/Meter/Installation/Approval/Index?handler=MeterApprovalDetails";
   const METER_APPROVAL_DEFAULT_PAGE_SIZE = 10;
+  /** Safety cap when auto-loading pages until an empty response. */
+  const METER_APPROVAL_MAX_AUTO_PAGES = 500;
 
   /** ASP.NET antiforgery / xsrf header used by the approval grid AJAX handler. */
   function getMeterApprovalXsrfToken() {
@@ -1693,12 +1697,14 @@
 
     let searchFilter = "";
     const searchEl = document.querySelector(
-      '#SearchFilter, input[name="SearchFilter"], input[id*="Search" i][type="text"], input[id*="search" i]'
+      "#iptMeterApprovalFilter, #SearchFilter, input[name=\"SearchFilter\"], input[id*=\"Search\" i][type=\"text\"]"
     );
     if (searchEl instanceof HTMLInputElement) searchFilter = searchEl.value.trim();
 
     let source = "All";
-    const sourceEl = document.querySelector('#Source, select[name="Source"]');
+    const sourceEl = document.querySelector(
+      "#ApprovalStatusTypeId, #Source, select[name=\"Source\"]"
+    );
     if (sourceEl instanceof HTMLSelectElement && sourceEl.value) source = sourceEl.value;
 
     const totalPagesEl = document.getElementById("MeterApprovalTotalPages");
@@ -1836,43 +1842,60 @@
     setMeterApprovalStatus(statusEl, "");
 
     try {
-      let lastPage =
-        parseInt(document.getElementById("MeterApprovalTotalPages")?.value || "1", 10) || 1;
-      const baseBody = buildMeterApprovalRequestBody(1, lastPage);
-
-      const first = await fetchMeterApprovalPage(1, baseBody);
-      if (typeof first.totalPages === "number" && first.totalPages > 0) {
-        lastPage = first.totalPages;
-      }
-      baseBody.LastPage = lastPage;
-
       /** @type {HTMLTableRowElement[]} */
-      const allRows = extractApprovalTableRows(first.html);
-      setMeterApprovalStatus(statusEl, `Page 1 / ${lastPage}…`);
+      const allRows = [];
+      const baseBody = buildMeterApprovalRequestBody(1, 1);
+      let pagesLoaded = 0;
+      let reportedTotal = 0;
 
-      for (let page = 2; page <= lastPage; page++) {
-        setMeterApprovalStatus(statusEl, `Page ${page} / ${lastPage}…`);
-        const data = await fetchMeterApprovalPage(page, baseBody);
-        allRows.push(...extractApprovalTableRows(data.html));
+      for (let pageNo = 1; pageNo <= METER_APPROVAL_MAX_AUTO_PAGES; pageNo++) {
+        baseBody.LastPage = Math.max(reportedTotal, pageNo, baseBody.LastPage);
+        setMeterApprovalStatus(
+          statusEl,
+          reportedTotal > 0 ? `Page ${pageNo} (UI shows ${reportedTotal})…` : `Page ${pageNo}…`
+        );
+
+        const data = await fetchMeterApprovalPage(pageNo, baseBody);
+        if (typeof data.totalPages === "number" && data.totalPages > reportedTotal) {
+          reportedTotal = data.totalPages;
+          baseBody.LastPage = reportedTotal;
+        }
+
+        const rows = extractApprovalTableRows(data.html);
+        if (rows.length === 0) {
+          if (pageNo === 1) throw new Error("page 1 returned no rows");
+          break;
+        }
+
+        allRows.push(...rows);
+        pagesLoaded = pageNo;
+      }
+
+      if (pagesLoaded >= METER_APPROVAL_MAX_AUTO_PAGES) {
+        wfmLog(`meter approval: stopped at safety cap (${METER_APPROVAL_MAX_AUTO_PAGES} pages)`);
       }
 
       const rowCount = renderMergedApprovalRows(allRows);
       const cur = document.getElementById("MeterApprovalCurrentPage");
       const tot = document.getElementById("MeterApprovalTotalPages");
       if (cur instanceof HTMLInputElement) cur.value = "1";
-      if (tot instanceof HTMLInputElement) tot.value = "1";
+      if (tot instanceof HTMLInputElement) tot.value = String(pagesLoaded || 1);
 
       const pag = document.getElementById("MeterApprovalPagination");
       if (pag) {
         pag.replaceChildren();
         const note = document.createElement("span");
         note.className = "px-3 py-1 text-sm text-gray-600";
-        note.textContent = `All ${lastPage} pages loaded (${rowCount} rows)`;
+        const uiNote =
+          reportedTotal > 0 && pagesLoaded > reportedTotal
+            ? ` (pagination UI showed ${reportedTotal})`
+            : "";
+        note.textContent = `Loaded ${pagesLoaded} pages (${rowCount} rows)${uiNote}`;
         pag.appendChild(note);
       }
 
-      setMeterApprovalStatus(statusEl, `Done — ${rowCount} rows from ${lastPage} pages`);
-      wfmLog(`meter approval: merged ${rowCount} rows from ${lastPage} pages`);
+      setMeterApprovalStatus(statusEl, `Done — ${rowCount} rows from ${pagesLoaded} pages`);
+      wfmLog(`meter approval: merged ${rowCount} rows from ${pagesLoaded} pages`);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       setMeterApprovalStatus(statusEl, `Error: ${msg}`);
