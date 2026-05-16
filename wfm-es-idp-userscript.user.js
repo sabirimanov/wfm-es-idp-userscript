@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         WFM ES IDP helpers
 // @namespace    https://github.com/sabirimanov/wfm-es-idp-userscript
-// @version      0.6.0
+// @version      0.6.1
 // @description  Pre-install checklist automation; Meter Approval load-all-pages table merge
 // @author       you
 // @homepageURL  https://github.com/sabirimanov/wfm-es-idp-userscript
@@ -1668,22 +1668,22 @@
     return "";
   }
 
-  /** Build POST body from current filters (matches page AJAX). */
-  function buildMeterApprovalRequestBody(pageNo, lastPage) {
-    let dropDownValue = "";
+  /** Device-type filter on approval index (`DropDownValue` in MeterApprovalDetails POST). */
+  function getMeterApprovalDropDownValue() {
+    const deviceType = document.getElementById("deviceTypeMtrApproval");
+    if (deviceType instanceof HTMLSelectElement && deviceType.value) {
+      return deviceType.value;
+    }
     const ddSel = document.querySelector(
       '#DropDownValue, select[name="DropDownValue"], select[id*="DropDown" i], select[id*="Region" i]'
     );
-    if (ddSel instanceof HTMLSelectElement && ddSel.value) {
-      dropDownValue = ddSel.value;
-    } else {
-      for (const sel of document.querySelectorAll("select")) {
-        if (/^[0-9a-f-]{36}$/i.test(sel.value)) {
-          dropDownValue = sel.value;
-          break;
-        }
-      }
-    }
+    if (ddSel instanceof HTMLSelectElement && ddSel.value) return ddSel.value;
+    return "";
+  }
+
+  /** Build POST body from current filters (matches page AJAX). */
+  function buildMeterApprovalRequestBody(pageNo, lastPage) {
+    const dropDownValue = getMeterApprovalDropDownValue();
 
     let searchFilter = "";
     const searchEl = document.querySelector(
