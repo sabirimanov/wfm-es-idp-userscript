@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         WFM ES IDP helpers
 // @namespace    https://github.com/sabirimanov/wfm-es-idp-userscript
-// @version      0.6.3
+// @version      0.6.4
 // @description  Pre-install checklist automation; Meter Approval load-all-pages table merge
 // @author       you
 // @homepageURL  https://github.com/sabirimanov/wfm-es-idp-userscript
@@ -26,7 +26,7 @@
    * Must match a key in `WFM_TRANSLATION_RULES`. Does not change input/select values or fire events.
    */
   /** Set to `"en"` to keep original English UI; `"az"` for Azerbaijani pre-install strings below. */
-  const WFM_UI_LOCALE = "az";
+  const WFM_UI_LOCALE = "en";
 
   /**
    * Per-locale label rules. Only nodes matched by `path` are updated (no input `.value` / no events).
@@ -1668,11 +1668,17 @@
     return "";
   }
 
-  /** Device-type filter on approval index (`DropDownValue` in MeterApprovalDetails POST). */
+  /** Asset type filter NB-IoT / GPRS (`DropDownValue` in MeterApprovalDetails POST). */
   function getMeterApprovalDropDownValue() {
-    const deviceType = document.getElementById("deviceTypeMtrApproval");
-    if (deviceType instanceof HTMLSelectElement && deviceType.value) {
-      return deviceType.value;
+    const assetType = document.getElementById("assetTypeMtrApproval");
+    if (assetType instanceof HTMLSelectElement && assetType.value) {
+      return assetType.value;
+    }
+    const jq = window.jQuery;
+    if (jq && typeof jq.fn?.select2 === "function") {
+      const v = jq("#assetTypeMtrApproval").val();
+      if (typeof v === "string" && v) return v;
+      if (Array.isArray(v) && v[0]) return String(v[0]);
     }
     const ddSel = document.querySelector(
       '#DropDownValue, select[name="DropDownValue"], select[id*="DropDown" i], select[id*="Region" i]'
