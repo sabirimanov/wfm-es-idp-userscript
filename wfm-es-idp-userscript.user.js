@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         WFM ES IDP helpers
 // @namespace    https://github.com/sabirimanov/wfm-es-idp-userscript
-// @version      0.6.4
+// @version      0.6.6
 // @description  Pre-install checklist automation; Meter Approval load-all-pages table merge
 // @author       you
 // @homepageURL  https://github.com/sabirimanov/wfm-es-idp-userscript
@@ -1775,7 +1775,49 @@
       frag.appendChild(document.importNode(row, true));
     }
     tbody.replaceChildren(frag);
+    applyMeterApprovalPendingFilter();
     return seen.size || rows.length;
+  }
+
+  /** @param {HTMLTableRowElement} row */
+  function isApprovalRowPending(row) {
+    return !!row.querySelector('[data-status="pending"]');
+  }
+
+  function isMeterApprovalPendingOnlyEnabled() {
+    const cb = document.getElementById("wfmMeterApprovalPendingOnly");
+    return cb instanceof HTMLInputElement && cb.checked;
+  }
+
+  /** Show only rows whose status badge has `data-status="pending"`. */
+  function applyMeterApprovalPendingFilter() {
+    const tbody = document.querySelector("#meter-approval-data-table-container tbody");
+    if (!tbody) return;
+    const pendingOnly = isMeterApprovalPendingOnlyEnabled();
+    const rows = tbody.querySelectorAll("tr");
+    let visible = 0;
+    for (let i = 0; i < rows.length; i++) {
+      const row = rows[i];
+      if (!(row instanceof HTMLTableRowElement)) continue;
+      const show = !pendingOnly || isApprovalRowPending(row);
+      row.style.display = show ? "" : "none";
+      if (show) visible += 1;
+    }
+    const filterStatus = document.getElementById("wfmMeterApprovalFilterStatus");
+    if (filterStatus) {
+      filterStatus.textContent = pendingOnly ? `${visible} pending shown` : "";
+    }
+  }
+
+  function installMeterApprovalTableFilterObserver() {
+    if (document.documentElement.dataset.wfmApprovalFilterObs === "1") return;
+    const container = document.getElementById("meter-approval-data-table-container");
+    if (!container) return;
+    document.documentElement.dataset.wfmApprovalFilterObs = "1";
+    const obs = new MutationObserver(() => {
+      if (isMeterApprovalPendingOnlyEnabled()) applyMeterApprovalPendingFilter();
+    });
+    obs.observe(container, { childList: true, subtree: true });
   }
 
   /** @param {HTMLElement | null} statusEl @param {string} text */
@@ -1842,6 +1884,35 @@
     }
   }
 
+  /**
+   * Close details modal without the page's jQuery handler calling `loadPageData`
+   * (capture phase runs before delegated `$(document).on("click", "#clsMtrApprovalDetailsModal")`).
+   */
+  function installMeterApprovalModalCloseInterceptor() {
+    if (!isMeterApprovalPage()) return;
+    if (document.documentElement.dataset.wfmMtrApprovalModalCloseBlock === "1") return;
+    document.documentElement.dataset.wfmMtrApprovalModalCloseBlock = "1";
+
+    document.addEventListener(
+      "click",
+      (ev) => {
+        const t = ev.target;
+        if (!(t instanceof Element)) return;
+        if (!t.closest("#clsMtrApprovalDetailsModal")) return;
+
+        ev.preventDefault();
+        ev.stopPropagation();
+        ev.stopImmediatePropagation();
+
+        const modal = document.getElementById("mtrApprovalDetailsModal");
+        if (modal) modal.classList.add("hidden");
+
+        wfmLog("meter approval: modal closed (loadPageData blocked)");
+      },
+      true
+    );
+  }
+
   function initMeterApprovalLoadAll() {
     if (!isMeterApprovalPage()) return;
     if (!document.getElementById("meter-approval-data-table-container")) return;
@@ -1866,7 +1937,24 @@
     status.id = "wfmLoadAllMeterApprovalStatus";
     status.className = "text-sm text-gray-600";
 
+    const pendingLabel = document.createElement("label");
+    pendingLabel.className =
+      "inline-flex items-center gap-2 text-sm text-gray-700 cursor-pointer select-none";
+    const pendingCb = document.createElement("input");
+    pendingCb.type = "checkbox";
+    pendingCb.id = "wfmMeterApprovalPendingOnly";
+    pendingCb.className = "rounded border-gray-300";
+    pendingCb.addEventListener("change", () => applyMeterApprovalPendingFilter());
+    pendingLabel.appendChild(pendingCb);
+    pendingLabel.appendChild(document.createTextNode("Pending only"));
+
+    const filterStatus = document.createElement("span");
+    filterStatus.id = "wfmMeterApprovalFilterStatus";
+    filterStatus.className = "text-sm text-gray-500";
+
     toolbar.appendChild(btn);
+    toolbar.appendChild(pendingLabel);
+    toolbar.appendChild(filterStatus);
     toolbar.appendChild(status);
 
     if (pagination?.parentElement) {
@@ -1876,7 +1964,8 @@
       container?.parentElement?.appendChild(toolbar);
     }
 
-    wfmLog("meter approval: Load all pages button ready");
+    installMeterApprovalTableFilterObserver();
+    wfmLog("meter approval: toolbar ready (load all + pending filter)");
   }
 
   if (DEBUG_SCRIPT_ACTIONS) {
@@ -1894,6 +1983,7 @@
   }
 
   if (isMeterApprovalPage()) {
+    installMeterApprovalModalCloseInterceptor();
     initMeterApprovalLoadAll();
     const approvalObs = new MutationObserver(() => initMeterApprovalLoadAll());
     approvalObs.observe(document.documentElement, { childList: true, subtree: true });
